@@ -1,0 +1,21 @@
+# Сборка CMake и Qt
+build/
+build-*/
+out/
+*.o
+*.obj
+*.exe
+*.dll
+*.a
+*.lib
+
+# Пользовательские настройки Qt Creator
+*.user
+*.user.*
+CMakeLists.txt.user*
+
+*.sqlite
+*.db
+
+.DS_Store
+Thumbs.db
