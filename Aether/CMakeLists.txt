@@ -4,13 +4,19 @@ project(Aether VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick)
+find_package(Qt6 REQUIRED COMPONENTS Quick Sql)
 
 qt_standard_project_setup(REQUIRES 6.10)
 
 qt_add_executable(appAether
-    main.cpp
+    src/main.cpp
+    src/core/AppCore.h src/core/AppCore.cpp
+    src/database/DatabaseWorker.h src/database/DatabaseWorker.cpp
+    src/models/ContactsModel.h src/models/ContactsModel.cpp
+    src/models/MessagesModel.h src/models/MessagesModel.cpp
 )
+
+target_include_directories(appAether PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 qt_add_qml_module(appAether
     URI Aether
@@ -31,6 +37,7 @@ set_target_properties(appAether PROPERTIES
 
 target_link_libraries(appAether
     PRIVATE Qt6::Quick
+            Qt6::Sql
 )
 
 install(TARGETS appAether

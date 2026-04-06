@@ -1,0 +1,38 @@
+#pragma once
+#include <QObject>
+#include <QSqlDatabase>
+#include "models/ContactsModel.h"
+#include "models/MessagesModel.h"
+
+class DatabaseWorker : public QObject {
+    Q_OBJECT
+public:
+    explicit DatabaseWorker(QObject *parent = nullptr);
+    ~DatabaseWorker();
+
+public slots:
+    // Слот для инициализации БД (будет выполняться в рабочем потоке)
+    void initDatabase();
+    
+    // Слоты для работы с БД
+    void loadContacts();
+    void addContact(const QString& name);
+    
+    void loadMessages(int contactId);
+    void addMessage(int contactId, const QString& text, bool isMine, int status);
+    void clearChat(int contactId);
+
+signals:
+    // Сигнал возвращается в UI-поток с результатом
+    void databaseInitialized(bool success, const QString& message);
+    void contactsLoaded(QList<ContactData> contacts);
+    void contactAdded(ContactData contact);
+    void messagesLoaded(QList<MessageData> messages);
+    void messageAdded(MessageData message);
+
+private:
+    QSqlDatabase m_db;
+    
+    // Вспомогательный метод создания таблиц
+    void createTables();
+};
