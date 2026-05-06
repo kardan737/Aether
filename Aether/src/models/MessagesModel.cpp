@@ -48,3 +48,14 @@ void MessagesModel::clear() {
     m_messages.clear();
     endResetModel();
 }
+
+void MessagesModel::updateMessageStatus(int messageId, int status) {
+    for (int i = 0; i < m_messages.size(); ++i) {
+        if (m_messages[i].id == messageId) {
+            m_messages[i].status = status;
+            QModelIndex idx = index(i, 0);
+            emit dataChanged(idx, idx, {StatusRole});
+            break;
+        }
+    }
+}

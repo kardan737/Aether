@@ -41,10 +41,10 @@ void NetworkWorker::connectToPeer(const QString& ip, quint16 port) {
     socket->connectToHost(ip, port);
 }
 
-void NetworkWorker::sendJsonMessage(const QString& ip, const QJsonObject& json) {
+void NetworkWorker::sendJsonMessage(int messageId, const QString& ip, const QJsonObject& json) {
     if (!m_clients.contains(ip)) {
-        qWarning() << "Aether Network: Нет подключения к" << ip << "для отправки сообщения.";
-        // Если оффлайн - просто прерываем отправку. Таймер Store-and-Forward позже заберет его из БД
+        // Если оффлайн - просто прерываем отправку без спама в консоль. 
+        // Таймер Store-and-Forward позже заберет его из БД и попытается снова.
         return;
     }
 
@@ -59,6 +59,7 @@ void NetworkWorker::sendJsonMessage(const QString& ip, const QJsonObject& json) 
         block.append(payload);          // Затем сам JSON Payload
         
         socket->write(block);
+        emit messageSent(messageId); // Уведомляем систему, что пакет ушел в сеть
     }
 }
 

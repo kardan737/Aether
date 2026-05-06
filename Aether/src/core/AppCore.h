@@ -21,22 +21,25 @@ public:
     MessagesModel* messagesModel() const { return m_messagesModel; }
 
     // Метод, который мы сможем вызывать из QML (JS)
-    Q_INVOKABLE void requestAddContact(const QString& name);
+    Q_INVOKABLE void requestAddContact(const QString& name, const QString& ip);
     Q_INVOKABLE void requestLoadMessages(int contactId);
     Q_INVOKABLE void requestSendMessage(int contactId, const QString& text);
     Q_INVOKABLE void requestClearChat(int contactId);
+    Q_INVOKABLE void requestDeleteContact(int contactId);
 
 signals:
     void startDbInit();
     void startNetworkInit(quint16 port);
     
-    void sendJsonToNetwork(const QString& ip, const QJsonObject& json);
+    void sendJsonToNetwork(int messageId, const QString& ip, const QJsonObject& json);
 
     void requestLoadContacts();
-    void requestAddContactToDb(const QString& name);
+    void requestAddContactToDb(const QString& name, const QString& ip);
     void requestLoadMessagesFromDb(int contactId);
     void requestAddMessageToDb(int contactId, const QString& text, bool isMine, int status);
     void requestClearChatInDb(int contactId);
+    void requestDeleteContactInDb(int contactId);
+    void requestProcessIncomingNetworkMessage(const QString& ip, const QString& text);
 
 private slots:
     void onDbInitialized(bool success, const QString& message);

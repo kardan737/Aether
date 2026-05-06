@@ -3,6 +3,8 @@
 #include <QSqlDatabase>
 #include "models/ContactsModel.h"
 #include "models/MessagesModel.h"
+#include <QJsonObject>
+#include <QTimer>
 
 class DatabaseWorker : public QObject {
     Q_OBJECT
@@ -16,11 +18,16 @@ public slots:
     
     // Слоты для работы с БД
     void loadContacts();
-    void addContact(const QString& name);
+    void addContact(const QString& name, const QString& ip);
     
     void loadMessages(int contactId);
     void addMessage(int contactId, const QString& text, bool isMine, int status);
     void clearChat(int contactId);
+    void deleteContact(int contactId);
+    void updateMessageStatus(int messageId, int status);
+    
+    // Обработка входящих сообщений из сети
+    void processIncomingNetworkMessage(const QString& ip, const QString& text);
 
 signals:
     // Сигнал возвращается в UI-поток с результатом
@@ -29,9 +36,18 @@ signals:
     void contactAdded(ContactData contact);
     void messagesLoaded(QList<MessageData> messages);
     void messageAdded(MessageData message);
+    void contactDeleted(int contactId);
+    void messageStatusUpdated(int messageId, int status);
+    
+    // Сигнал для прямой передачи пакета в сетевой воркер
+    void requestNetworkSend(int messageId, const QString& ip, const QJsonObject& json);
+
+private slots:
+    void processStoreAndForward();
 
 private:
     QSqlDatabase m_db;
+    QTimer* m_snfTimer = nullptr;
     
     // Вспомогательный метод создания таблиц
     void createTables();

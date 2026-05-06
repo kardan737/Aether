@@ -39,7 +39,9 @@ Window {
     // Функция удаления контакта
     function deleteContact() {
         if (activeContactId !== -1) {
-            console.log("Удаление контакта будет реализовано в C++")
+            appCore.requestDeleteContact(activeContactId)
+            activeContactId = -1
+            activeContactName = ""
         }
     }
 
@@ -81,40 +83,45 @@ Window {
                     }
                 }
 
-                // Поле ввода нового контакта
-                RowLayout {
+                // Поля ввода нового контакта (Имя и IP)
+                ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 5
 
                     TextField {
-                        id: newContactInput
+                        id: newNameInput
                         Layout.fillWidth: true
-                        placeholderText: "Ник или IP..."
+                        placeholderText: "Имя контакта..."
                         color: "white"
                         font.pixelSize: 13
-
                         background: Rectangle {
                             color: "#333333"
                             radius: 4
-                            border.color: newContactInput.activeFocus ? "#4a90e2" : "transparent"
+                            border.color: newNameInput.activeFocus ? "#4a90e2" : "transparent"
                         }
+                    }
 
-                        // Добавление по нажатию Enter
-                        onAccepted: {
-                            if (text.trim() !== "") {
-                                appCore.requestAddContact(text.trim())
-                                text = "" // Очищаем поле
-                            }
+                    TextField {
+                        id: newIpInput
+                        Layout.fillWidth: true
+                        placeholderText: "IP-адрес (напр. 10.147.17.5)..."
+                        color: "white"
+                        font.pixelSize: 13
+                        background: Rectangle {
+                            color: "#333333"
+                            radius: 4
+                            border.color: newIpInput.activeFocus ? "#4a90e2" : "transparent"
                         }
                     }
 
                     Button {
-                        text: "+"
-                        Layout.preferredWidth: 40
+                        text: "Добавить контакт"
+                        Layout.fillWidth: true
                         onClicked: {
-                            if (newContactInput.text.trim() !== "") {
-                                appCore.requestAddContact(newContactInput.text.trim())
-                                newContactInput.text = "" // Очищаем поле
+                            if (newNameInput.text.trim() !== "" && newIpInput.text.trim() !== "") {
+                                appCore.requestAddContact(newNameInput.text.trim(), newIpInput.text.trim())
+                                newNameInput.text = ""
+                                newIpInput.text = ""
                             }
                         }
                     }

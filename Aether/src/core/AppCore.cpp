@@ -31,6 +31,10 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(m_networkWorker, &NetworkWorker::messageReceived, this, &AppCore::onNetworkMessageReceived);
     connect(this, &AppCore::sendJsonToNetwork, m_networkWorker, &NetworkWorker::sendJsonMessage);
 
+    // Прямая связь: БД напрямую просит Сеть отправить пакет (работает через QueuedConnection)
+    connect(m_dbWorker, &DatabaseWorker::requestNetworkSend, m_networkWorker, &NetworkWorker::sendJsonMessage);
+    connect(this, &AppCore::requestProcessIncomingNetworkMessage, m_dbWorker, &DatabaseWorker::processIncomingNetworkMessage);
+
     // Связи работы с контактами
     connect(this, &AppCore::requestLoadContacts, m_dbWorker, &DatabaseWorker::loadContacts);
     connect(this, &AppCore::requestAddContactToDb, m_dbWorker, &DatabaseWorker::addContact);
@@ -42,9 +46,17 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(this, &AppCore::requestLoadMessagesFromDb, m_dbWorker, &DatabaseWorker::loadMessages);
     connect(this, &AppCore::requestAddMessageToDb, m_dbWorker, &DatabaseWorker::addMessage);
     connect(this, &AppCore::requestClearChatInDb, m_dbWorker, &DatabaseWorker::clearChat);
+    connect(this, &AppCore::requestDeleteContactInDb, m_dbWorker, &DatabaseWorker::deleteContact);
 
     connect(m_dbWorker, &DatabaseWorker::messagesLoaded, m_messagesModel, &MessagesModel::setMessages);
     connect(m_dbWorker, &DatabaseWorker::messageAdded, m_messagesModel, &MessagesModel::appendMessage);
+    connect(m_dbWorker, &DatabaseWorker::contactDeleted, m_contactsModel, &ContactsModel::removeContact);
+
+    // Связь: успешная отправка по сети мгновенно меняет статус в БД и UI
+    connect(m_networkWorker, &NetworkWorker::messageSent, m_dbWorker, [this](int msgId) {
+        QMetaObject::invokeMethod(m_dbWorker, "updateMessageStatus", Qt::QueuedConnection, Q_ARG(int, msgId), Q_ARG(int, 1));
+    });
+    connect(m_dbWorker, &DatabaseWorker::messageStatusUpdated, m_messagesModel, &MessagesModel::updateMessageStatus);
 
     m_dbThread.start();
     m_networkThread.start();
@@ -76,12 +88,12 @@ void AppCore::onNetworkStarted(bool success, const QString& message) {
     qDebug() << "Aether Network:" << message;
 }
 
-void AppCore::requestAddContact(const QString& name) {
-    emit requestAddContactToDb(name);
+void AppCore::requestAddContact(const QString& name, const QString& ip) {
+    emit requestAddContactToDb(name, ip);
     
-    // Пока в UI мы вводим IP-адрес вместо имени, пытаемся сразу открыть P2P-туннель
+    // Сразу пытаемся открыть P2P-туннель по указанному IP
     QMetaObject::invokeMethod(m_networkWorker, "connectToPeer", Qt::QueuedConnection, 
-                              Q_ARG(QString, name), Q_ARG(quint16, 7777));
+                              Q_ARG(QString, ip), Q_ARG(quint16, 7777));
 }
 
 void AppCore::requestLoadMessages(int contactId) {
@@ -90,14 +102,7 @@ void AppCore::requestLoadMessages(int contactId) {
 
 void AppCore::requestSendMessage(int contactId, const QString& text) {
     emit requestAddMessageToDb(contactId, text, true, 0); // isMine=true, status=0 (ожидает)
-    
-    // Формируем полезную нагрузку (Payload)
-    QJsonObject json;
-    json["type"] = "message";
-    json["text"] = text;
-    
-    // TODO: Нам нужно получить IP-адрес по contactId из DatabaseWorker для отправки,
-    // либо отложить отправку до срабатывания таймера Store-and-Forward.
+    // Отправка в сеть теперь автоматически произойдет внутри DatabaseWorker::addMessage
 }
 
 void AppCore::requestClearChat(int contactId) {
@@ -105,12 +110,17 @@ void AppCore::requestClearChat(int contactId) {
     m_messagesModel->clear(); // Очищаем и на фронтенде тоже
 }
 
+void AppCore::requestDeleteContact(int contactId) {
+    emit requestDeleteContactInDb(contactId);
+    m_messagesModel->clear(); // Очищаем сообщения на экране, так как чат удален
+}
+
 void AppCore::onNetworkMessageReceived(const QString& ip, const QJsonObject& json) {
     if (json.contains("type") && json["type"].toString() == "message") {
         QString text = json["text"].toString();
         qDebug() << "Aether P2P: Получено сообщение от" << ip << ":" << text;
         
-        // TODO: Найти contactId по IP через DatabaseWorker и сохранить в БД
-        // emit requestAddMessageToDb(contactId, text, false, 1);
+        // Просим базу данных разобраться, чей это IP, и сохранить текст
+        emit requestProcessIncomingNetworkMessage(ip, text);
     }
 }

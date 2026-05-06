@@ -41,3 +41,14 @@ void ContactsModel::appendContact(const ContactData& contact) {
     m_contacts.append(contact);
     endInsertRows();
 }
+
+void ContactsModel::removeContact(int contactId) {
+    for (int i = 0; i < m_contacts.size(); ++i) {
+        if (m_contacts[i].id == contactId) {
+            beginRemoveRows(QModelIndex(), i, i);
+            m_contacts.removeAt(i);
+            endRemoveRows();
+            break;
+        }
+    }
+}

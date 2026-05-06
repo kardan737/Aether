@@ -21,13 +21,14 @@ public slots:
     void connectToPeer(const QString& ip, quint16 port);
     
     // Отправка сообщения в формате JSON
-    void sendJsonMessage(const QString& ip, const QJsonObject& json);
+    void sendJsonMessage(int messageId, const QString& ip, const QJsonObject& json);
 
 signals:
     void serverStarted(bool success, const QString& message);
     void peerConnected(const QString& ip);
     void peerDisconnected(const QString& ip);
     void messageReceived(const QString& ip, const QJsonObject& json);
+    void messageSent(int messageId);
 
 private slots:
     void onNewConnection();

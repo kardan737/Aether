@@ -34,6 +34,7 @@ public slots:
     // Слоты для получения данных из DatabaseWorker
     void setContacts(const QList<ContactData>& contacts);
     void appendContact(const ContactData& contact);
+    void removeContact(int contactId);
 
 private:
     QList<ContactData> m_contacts;

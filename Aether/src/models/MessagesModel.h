@@ -35,6 +35,7 @@ public slots:
     void setMessages(const QList<MessageData>& messages);
     void appendMessage(const MessageData& message);
     void clear();
+    void updateMessageStatus(int messageId, int status);
 
 private:
     QList<MessageData> m_messages;

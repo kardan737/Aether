@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QDebug>
 #include <QDateTime>
+#include <QJsonObject>
 
 DatabaseWorker::DatabaseWorker(QObject *parent) : QObject(parent) {}
 
@@ -34,6 +35,13 @@ void DatabaseWorker::initDatabase() {
 
     createTables();
     emit databaseInitialized(true, "SQLite база данных успешно инициализирована.");
+
+    // Запускаем таймер Store-and-Forward в потоке БД (каждые 5 секунд)
+    if (!m_snfTimer) {
+        m_snfTimer = new QTimer(this);
+        connect(m_snfTimer, &QTimer::timeout, this, &DatabaseWorker::processStoreAndForward);
+        m_snfTimer->start(5000);
+    }
 }
 
 void DatabaseWorker::loadContacts() {
@@ -51,10 +59,11 @@ void DatabaseWorker::loadContacts() {
     emit contactsLoaded(contacts);
 }
 
-void DatabaseWorker::addContact(const QString& name) {
+void DatabaseWorker::addContact(const QString& name, const QString& ip) {
     QSqlQuery query(m_db);
-    query.prepare("INSERT INTO contacts (name, last_seen) VALUES (:name, :last_seen)");
+    query.prepare("INSERT INTO contacts (name, ip_address, last_seen) VALUES (:name, :ip, :last_seen)");
     query.bindValue(":name", name);
+    query.bindValue(":ip", ip);
     query.bindValue(":last_seen", QDateTime::currentSecsSinceEpoch());
     
     if (query.exec()) {
@@ -102,9 +111,47 @@ void DatabaseWorker::addMessage(int contactId, const QString& text, bool isMine,
     if (query.exec()) {
         MessageData m{query.lastInsertId().toInt(), text, isMine, status, QDateTime::fromSecsSinceEpoch(ts).toString("HH:mm")};
         emit messageAdded(m);
+        
+        // Если это наше сообщение, достаем IP контакта и пробрасываем в сеть
+        if (isMine) {
+            QSqlQuery ipQuery(m_db);
+            ipQuery.prepare("SELECT ip_address FROM contacts WHERE id = :cid");
+            ipQuery.bindValue(":cid", contactId);
+            if (ipQuery.exec() && ipQuery.next()) {
+                QString ip = ipQuery.value(0).toString();
+                QJsonObject json;
+                json["type"] = "message";
+                json["text"] = text;
+                emit requestNetworkSend(m.id, ip, json);
+            }
+        }
     } else {
         qWarning() << "Ошибка добавления сообщения:" << query.lastError().text();
     }
+}
+
+void DatabaseWorker::processIncomingNetworkMessage(const QString& ip, const QString& text) {
+    QSqlQuery q(m_db);
+    q.prepare("SELECT id FROM contacts WHERE ip_address = :ip LIMIT 1");
+    q.bindValue(":ip", ip);
+    int contactId = -1;
+    
+    if (q.exec() && q.next()) {
+        contactId = q.value(0).toInt();
+    } else {
+        // Неизвестный IP? Автоматически создаем контакт!
+        q.prepare("INSERT INTO contacts (name, ip_address, last_seen) VALUES (:name, :ip, :ts)");
+        q.bindValue(":name", ip); // В качестве имени ставим сам IP
+        q.bindValue(":ip", ip);
+        q.bindValue(":ts", QDateTime::currentSecsSinceEpoch());
+        if (q.exec()) {
+            contactId = q.lastInsertId().toInt();
+            emit contactAdded(ContactData{contactId, ip, true, 0.0});
+        }
+    }
+    
+    // Сохраняем сообщение как входящее (isMine=false, status=1)
+    addMessage(contactId, text, false, 1);
 }
 
 void DatabaseWorker::clearChat(int contactId) {
@@ -112,6 +159,41 @@ void DatabaseWorker::clearChat(int contactId) {
     query.prepare("DELETE FROM messages WHERE contact_id = :cid");
     query.bindValue(":cid", contactId);
     query.exec();
+}
+
+void DatabaseWorker::deleteContact(int contactId) {
+    QSqlQuery query(m_db);
+    // Сначала удаляем все сообщения чата
+    query.prepare("DELETE FROM messages WHERE contact_id = :cid");
+    query.bindValue(":cid", contactId);
+    query.exec();
+    
+    // Затем удаляем сам контакт
+    query.prepare("DELETE FROM contacts WHERE id = :cid");
+    query.bindValue(":cid", contactId);
+    if (query.exec()) {
+        emit contactDeleted(contactId);
+    }
+}
+
+void DatabaseWorker::updateMessageStatus(int messageId, int status) {
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE messages SET status = :status WHERE id = :id");
+    query.bindValue(":status", status);
+    query.bindValue(":id", messageId);
+    if (query.exec()) {
+        emit messageStatusUpdated(messageId, status);
+    }
+}
+
+void DatabaseWorker::processStoreAndForward() {
+    QSqlQuery query(m_db);
+    // Ищем зависшие сообщения, которые мы отправили, но статус всё еще 0
+    query.exec("SELECT m.id, m.text, c.ip_address FROM messages m JOIN contacts c ON m.contact_id = c.id WHERE m.status = 0 AND m.is_mine = 1");
+    while (query.next()) {
+        QJsonObject json; json["type"] = "message"; json["text"] = query.value(1).toString();
+        emit requestNetworkSend(query.value(0).toInt(), query.value(2).toString(), json);
+    }
 }
 
 void DatabaseWorker::createTables() {
