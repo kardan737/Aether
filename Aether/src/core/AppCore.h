@@ -2,8 +2,10 @@
 #include <QObject>
 #include <QThread>
 #include "database/DatabaseWorker.h"
+#include "network/NetworkWorker.h"
 #include "models/ContactsModel.h"
 #include "models/MessagesModel.h"
+#include <QJsonObject>
 
 class AppCore : public QObject {
     Q_OBJECT
@@ -26,6 +28,10 @@ public:
 
 signals:
     void startDbInit();
+    void startNetworkInit(quint16 port);
+    
+    void sendJsonToNetwork(const QString& ip, const QJsonObject& json);
+
     void requestLoadContacts();
     void requestAddContactToDb(const QString& name);
     void requestLoadMessagesFromDb(int contactId);
@@ -34,10 +40,16 @@ signals:
 
 private slots:
     void onDbInitialized(bool success, const QString& message);
+    void onNetworkStarted(bool success, const QString& message);
+    void onNetworkMessageReceived(const QString& ip, const QJsonObject& json);
 
 private:
     QThread m_dbThread;
     DatabaseWorker* m_dbWorker;
+
+    QThread m_networkThread;
+    NetworkWorker* m_networkWorker;
+    
     ContactsModel* m_contactsModel;
     MessagesModel* m_messagesModel;
 };

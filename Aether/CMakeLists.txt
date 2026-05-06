@@ -4,7 +4,7 @@ project(Aether VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick Sql)
+find_package(Qt6 REQUIRED COMPONENTS Quick Sql Network)
 
 qt_standard_project_setup(REQUIRES 6.10)
 
@@ -12,6 +12,7 @@ qt_add_executable(appAether
     src/main.cpp
     src/core/AppCore.h src/core/AppCore.cpp
     src/database/DatabaseWorker.h src/database/DatabaseWorker.cpp
+    src/network/NetworkWorker.h src/network/NetworkWorker.cpp
     src/models/ContactsModel.h src/models/ContactsModel.cpp
     src/models/MessagesModel.h src/models/MessagesModel.cpp
 )
@@ -32,12 +33,13 @@ set_target_properties(appAether PROPERTIES
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
     MACOSX_BUNDLE TRUE
-    WIN32_EXECUTABLE TRUE
+    WIN32_EXECUTABLE FALSE
 )
 
 target_link_libraries(appAether
     PRIVATE Qt6::Quick
             Qt6::Sql
+            Qt6::Network
 )
 
 install(TARGETS appAether
