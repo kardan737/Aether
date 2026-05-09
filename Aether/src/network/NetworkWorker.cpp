@@ -85,9 +85,12 @@ void NetworkWorker::onReadyRead() {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
 
-    // Берем "чистый" IP из нашего списка, чтобы избежать IPv6 префиксов (::ffff:)
-    // которые ломают поиск по базе данных и создают дубликаты чатов.
-    QString ip = m_clients.key(socket);
+    // Берем IP прямо из сокета. Это решает критический баг со "скрещенными" соединениями
+    // (когда узлы подключаются друг к другу одновременно и старый сокет выпадает из m_clients).
+    QString ip = socket->peerAddress().toString();
+    if (ip.startsWith("::ffff:")) {
+        ip = ip.mid(7);
+    }
     if (ip.isEmpty()) return;
     
     // 1. Сливаем все новые байты в буфер конкретного клиента

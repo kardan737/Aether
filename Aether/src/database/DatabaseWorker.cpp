@@ -55,13 +55,14 @@ void DatabaseWorker::initDatabase() {
 void DatabaseWorker::loadContacts() {
     QList<ContactData> contacts;
     QSqlQuery query(m_db);
-    query.exec("SELECT id, name, last_seen FROM contacts");
+    query.exec("SELECT id, name, last_seen, unread_count FROM contacts ORDER BY last_seen DESC");
     while (query.next()) {
         ContactData c;
         c.id = query.value(0).toInt();
         c.name = query.value(1).toString();
         c.isOnline = false; // В будущем будет зависеть от P2P сети
         c.decayLevel = 0.0; // В будущем: расчет старения на базе last_seen
+        c.unreadCount = query.value(3).toInt();
         contacts.append(c);
     }
     emit contactsLoaded(contacts);
@@ -92,6 +93,7 @@ void DatabaseWorker::addContact(const QString& name, const QString& ip) {
         c.name = name;
         c.isOnline = false;
         c.decayLevel = 0.0;
+        c.unreadCount = 0;
         emit contactAdded(c);
     } else {
         qWarning() << "Error adding contact to DB:" << query.lastError().text();
@@ -130,7 +132,15 @@ void DatabaseWorker::addMessage(int contactId, const QString& text, bool isMine,
     
     if (query.exec()) {
         MessageData m{query.lastInsertId().toInt(), text, isMine, status, QDateTime::fromSecsSinceEpoch(ts).toString("HH:mm")};
-        emit messageAdded(m);
+        emit messageAdded(contactId, m);
+        
+        // Обновляем время последней активности контакта и поднимаем его наверх
+        QSqlQuery updateContact(m_db);
+        updateContact.prepare("UPDATE contacts SET last_seen = :ts WHERE id = :cid");
+        updateContact.bindValue(":ts", ts);
+        updateContact.bindValue(":cid", contactId);
+        updateContact.exec();
+        emit contactMovedToTop(contactId);
         
         // Если это наше сообщение, достаем IP контакта и пробрасываем в сеть
         if (isMine) {
@@ -185,12 +195,25 @@ void DatabaseWorker::processIncomingNetworkMessage(const QString& ip, const QStr
         q.bindValue(":ts", QDateTime::currentSecsSinceEpoch());
         if (q.exec()) {
             contactId = q.lastInsertId().toInt();
-            emit contactAdded(ContactData{contactId, finalName, true, 0.0});
+            emit contactAdded(ContactData{contactId, finalName, true, 0.0, 0});
         }
     }
     
     // Сохраняем сообщение как входящее (isMine=false, status=1)
     addMessage(contactId, text, false, 1);
+    
+    // Увеличиваем счетчик непрочитанных сообщений для этого контакта
+    QSqlQuery updateUnread(m_db);
+    updateUnread.prepare("UPDATE contacts SET unread_count = unread_count + 1 WHERE id = :id");
+    updateUnread.bindValue(":id", contactId);
+    if (updateUnread.exec()) {
+        QSqlQuery fetchUnread(m_db);
+        fetchUnread.prepare("SELECT unread_count FROM contacts WHERE id = :id");
+        fetchUnread.bindValue(":id", contactId);
+        if (fetchUnread.exec() && fetchUnread.next()) {
+            emit contactUnreadCountChanged(contactId, fetchUnread.value(0).toInt());
+        }
+    }
 }
 
 void DatabaseWorker::clearChat(int contactId) {
@@ -215,6 +238,18 @@ void DatabaseWorker::deleteContact(int contactId) {
     }
 }
 
+void DatabaseWorker::renameContact(int contactId, const QString& newName) {
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE contacts SET name = :name WHERE id = :id");
+    query.bindValue(":name", newName);
+    query.bindValue(":id", contactId);
+    if (query.exec()) {
+        emit contactRenamed(contactId, newName);
+    } else {
+        qWarning() << "Error renaming contact in DB:" << query.lastError().text();
+    }
+}
+
 void DatabaseWorker::updateMessageStatus(int messageId, int status) {
     QSqlQuery query(m_db);
     query.prepare("UPDATE messages SET status = :status WHERE id = :id");
@@ -222,6 +257,15 @@ void DatabaseWorker::updateMessageStatus(int messageId, int status) {
     query.bindValue(":id", messageId);
     if (query.exec()) {
         emit messageStatusUpdated(messageId, status);
+    }
+}
+
+void DatabaseWorker::markChatAsRead(int contactId) {
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE contacts SET unread_count = 0 WHERE id = :id");
+    query.bindValue(":id", contactId);
+    if (query.exec()) {
+        emit contactUnreadCountChanged(contactId, 0);
     }
 }
 
@@ -234,6 +278,9 @@ void DatabaseWorker::handlePeerConnected(const QString& ip) {
             emit contactStatusChanged(q.value(0).toInt(), true);
         }
     }
+    
+    // Мгновенно пытаемся отправить зависшие сообщения, как только узел появился в сети!
+    processStoreAndForward();
 }
 
 void DatabaseWorker::handlePeerDisconnected(const QString& ip) {
@@ -278,6 +325,9 @@ void DatabaseWorker::createTables() {
                "name TEXT UNIQUE NOT NULL, "
                "ip_address TEXT, "
                "last_seen INTEGER)");
+               
+    // Мягкое добавление колонки (для старых баз данных, сработает только 1 раз)
+    query.exec("ALTER TABLE contacts ADD COLUMN unread_count INTEGER DEFAULT 0");
 
     // Таблица сообщений (с поддержкой Store-and-Forward через status)
     query.exec("CREATE TABLE IF NOT EXISTS messages ("

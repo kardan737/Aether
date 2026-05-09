@@ -26,6 +26,8 @@ public:
     Q_INVOKABLE void requestSendMessage(int contactId, const QString& text);
     Q_INVOKABLE void requestClearChat(int contactId);
     Q_INVOKABLE void requestDeleteContact(int contactId);
+    Q_INVOKABLE void requestRenameContact(int contactId, const QString& newName);
+    Q_INVOKABLE void requestMarkChatAsRead(int contactId);
 
 signals:
     void startDbInit();
@@ -39,12 +41,15 @@ signals:
     void requestAddMessageToDb(int contactId, const QString& text, bool isMine, int status);
     void requestClearChatInDb(int contactId);
     void requestDeleteContactInDb(int contactId);
+    void requestRenameContactInDb(int contactId, const QString& newName);
     void requestProcessIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName);
+    void requestMarkChatAsReadInDb(int contactId);
 
 private slots:
     void onDbInitialized(bool success, const QString& message);
     void onNetworkStarted(bool success, const QString& message);
     void onNetworkMessageReceived(const QString& ip, const QJsonObject& json);
+    void onMessageAdded(int contactId, const MessageData& message);
 
 private:
     QThread m_dbThread;
@@ -55,4 +60,6 @@ private:
     
     ContactsModel* m_contactsModel;
     MessagesModel* m_messagesModel;
+
+    int m_currentContactId = -1;
 };

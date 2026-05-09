@@ -26,6 +26,9 @@ Window {
         activeContactName = name
         // Запрашиваем C++ загрузить историю из БД для этого контакта
         appCore.requestLoadMessages(id)
+        
+        // Сбрасываем счетчик непрочитанных (отмечаем как прочитанное)
+        appCore.requestMarkChatAsRead(id)
     }
 
     // Функция отправки сообщения
@@ -49,6 +52,14 @@ Window {
             appCore.requestDeleteContact(activeContactId)
             activeContactId = -1
             activeContactName = ""
+        }
+    }
+
+    // Функция переименования чата
+    function renameChat(newName) {
+        if (activeContactId !== -1 && newName.trim() !== "") {
+            appCore.requestRenameContact(activeContactId, newName.trim())
+            activeContactName = newName.trim()
         }
     }
 
@@ -147,6 +158,11 @@ Window {
                     model: appCore.contactsModel
                     clip: true
 
+                // Плавные анимации при перемещении и добавлении контактов
+                add: Transition { NumberAnimation { property: "y"; duration: 250; easing.type: Easing.OutQuad } }
+                move: Transition { NumberAnimation { property: "y"; duration: 250; easing.type: Easing.OutQuad } }
+                displaced: Transition { NumberAnimation { property: "y"; duration: 250; easing.type: Easing.OutQuad } }
+
                     delegate: ItemDelegate {
                         width: parent.width
                         text: model.name
@@ -179,6 +195,25 @@ Window {
                                 font.pixelSize: 14
                                 verticalAlignment: Text.AlignVCenter
                                 Layout.fillWidth: true
+                            }
+                            
+                            // Маркер непрочитанных сообщений
+                            Rectangle {
+                                visible: model.unreadCount > 0
+                                width: Math.max(20, unreadText.implicitWidth + 10)
+                                height: 20
+                                radius: 10
+                                color: "#4a90e2"
+                                Layout.alignment: Qt.AlignVCenter
+                                
+                                Text {
+                                    id: unreadText
+                                    anchors.centerIn: parent
+                                    text: model.unreadCount > 99 ? "99+" : model.unreadCount
+                                    color: "white"
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                }
                             }
                         }
 
@@ -228,24 +263,33 @@ Window {
                     }
 
                     Button {
-                        text: "Закрыть чат"
+                        text: "✏️"
+                        font.pixelSize: 16
+                        Layout.preferredWidth: 40
+                        visible: activeContactName !== ""
+                        onClicked: {
+                            renameInput.text = activeContactName
+                            renameChatPopup.open()
+                        }
+                    }
+
+                    Button {
+                        text: "🗑️"
+                        font.pixelSize: 16
+                        Layout.preferredWidth: 40
+                        visible: activeContactName !== ""
+                        onClicked: chatActionsPopup.open()
+                    }
+
+                    Button {
+                        text: "✖"
+                        font.pixelSize: 16
+                        Layout.preferredWidth: 40
                         visible: activeContactName !== ""
                         onClicked: {
                             activeContactId = -1
                             activeContactName = ""
                         }
-                    }
-
-                    Button {
-                        text: "Очистить чат"
-                        visible: activeContactName !== ""
-                        onClicked: clearChat()
-                    }
-
-                    Button {
-                        text: "Удалить контакт"
-                        visible: activeContactName !== ""
-                        onClicked: deleteContact()
                     }
                 }
             }
@@ -276,6 +320,47 @@ Window {
             bottomMargin: 15
 
             model: appCore.messagesModel
+            
+            // Буфер рендеринга: позволяет заранее отрисовывать элементы за краем экрана,
+            // чтобы анимации появления работали корректно при прокрутке.
+            displayMarginBeginning: 150
+            displayMarginEnd: 150
+            
+            // Умная и плавная прокрутка вниз
+            onCountChanged: {
+                // Если мы находимся в чате, и пришло сообщение, сразу отмечаем его прочитанным
+                if (activeContactId !== -1) {
+                    appCore.requestMarkChatAsRead(activeContactId)
+                }
+            
+                Qt.callLater(function() {
+                    if (chatView.count === 0) return;
+                    
+                    var targetY = Math.max(-chatView.topMargin, chatView.contentHeight - chatView.height + chatView.bottomMargin)
+                    
+                    // Если прыжок слишком большой (например, открыли другой чат с историей) — мотаем мгновенно
+                    if (Math.abs(targetY - chatView.contentY) > chatView.height / 2) {
+                        chatView.contentY = targetY
+                    } else if (targetY > chatView.contentY) {
+                        // Если добавилось 1-2 сообщения — плавно прокручиваем, сдвигая старые сообщения вверх
+                        smoothScrollAnim.to = targetY
+                        smoothScrollAnim.start()
+                    }
+                })
+            }
+            
+            PropertyAnimation {
+                id: smoothScrollAnim
+                target: chatView
+                property: "contentY"
+                duration: 300
+                easing.type: Easing.OutQuad
+            }
+
+            // Плавное появление самого пузырька сообщения
+            add: Transition {
+                NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 250 }
+            }
 
             delegate: Item {
                 width: ListView.view.width
@@ -375,7 +460,6 @@ Window {
                         if (msgInput.text.trim() !== "") {
                             sendMessage(msgInput.text.trim())
                             msgInput.text = ""
-                            chatView.positionViewAtEnd()
                         }
                     }
                     }
@@ -388,7 +472,7 @@ Window {
     Popup {
         id: settingsPopup
         width: 300
-        height: 250
+        height: 200
         x: Math.round((parent.width - width) / 2)
         y: Math.round((parent.height - height) / 2)
         modal: true
@@ -405,8 +489,8 @@ Window {
             anchors.centerIn: parent
             spacing: 15
             Text { text: "Настройки Aether"; color: "white"; font.pixelSize: 18; font.bold: true; Layout.alignment: Qt.AlignHCenter }
-            TextField { placeholderText: "P2P Порт (по-умолч. 8080)"; color: "white"; background: Rectangle { color: "#333333"; radius: 4 } }
             TextField { 
+                Layout.fillWidth: true
                 placeholderText: "Ваш никнейм"
                 color: "white"
                 text: appSettings.myName
@@ -414,6 +498,104 @@ Window {
                 background: Rectangle { color: "#333333"; radius: 4 } 
             }
             Button { text: "Сохранить и закрыть"; Layout.alignment: Qt.AlignHCenter; onClicked: settingsPopup.close() }
+        }
+    }
+
+    // Диалог действий с чатом (открывается по кнопке с корзинкой)
+    Popup {
+        id: chatActionsPopup
+        width: 250
+        height: 180
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: "#252525"
+            border.color: "#333333"
+            radius: 8
+        }
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 15
+            
+            Text { 
+                text: "Действия с чатом"
+                color: "white" 
+                font.pixelSize: 16 
+                font.bold: true 
+                Layout.alignment: Qt.AlignHCenter 
+            }
+            
+            Button { 
+                text: "Очистить историю"
+                Layout.fillWidth: true
+                onClicked: {
+                    clearChat()
+                    chatActionsPopup.close()
+                }
+            }
+            
+            Button { 
+                text: "Удалить контакт"
+                Layout.fillWidth: true
+                onClicked: {
+                    deleteContact()
+                    chatActionsPopup.close()
+                }
+            }
+        }
+    }
+
+    // Диалог переименования чата
+    Popup {
+        id: renameChatPopup
+        width: 250
+        height: 150
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: "#252525"
+            border.color: "#333333"
+            radius: 8
+        }
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 15
+            
+            Text { 
+                text: "Переименовать чат"
+                color: "white" 
+                font.pixelSize: 16 
+                font.bold: true 
+                Layout.alignment: Qt.AlignHCenter 
+            }
+            
+            TextField {
+                id: renameInput
+                Layout.fillWidth: true
+                color: "white"
+                background: Rectangle { color: "#333333"; radius: 4 }
+                onAccepted: saveRenameBtn.clicked()
+            }
+            
+            Button { 
+                id: saveRenameBtn
+                text: "Сохранить"
+                Layout.fillWidth: true
+                onClicked: {
+                    renameChat(renameInput.text)
+                    renameChatPopup.close()
+                }
+            }
         }
     }
 }

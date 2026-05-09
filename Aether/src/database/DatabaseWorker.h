@@ -24,7 +24,9 @@ public slots:
     void addMessage(int contactId, const QString& text, bool isMine, int status);
     void clearChat(int contactId);
     void deleteContact(int contactId);
+    void renameContact(int contactId, const QString& newName);
     void updateMessageStatus(int messageId, int status);
+    void markChatAsRead(int contactId);
     
     // Обработка входящих сообщений из сети
     void processIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName);
@@ -38,10 +40,13 @@ signals:
     void contactsLoaded(QList<ContactData> contacts);
     void contactAdded(ContactData contact);
     void messagesLoaded(QList<MessageData> messages);
-    void messageAdded(MessageData message);
+    void messageAdded(int contactId, MessageData message);
     void contactDeleted(int contactId);
     void messageStatusUpdated(int messageId, int status);
     void contactStatusChanged(int contactId, bool isOnline);
+    void contactRenamed(int contactId, const QString& newName);
+    void contactMovedToTop(int contactId);
+    void contactUnreadCountChanged(int contactId, int count);
     
     // Сигнал для прямой передачи пакета в сетевой воркер
     void requestNetworkSend(int messageId, const QString& ip, const QJsonObject& json);

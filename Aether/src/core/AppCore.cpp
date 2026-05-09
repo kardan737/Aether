@@ -53,10 +53,15 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(this, &AppCore::requestAddMessageToDb, m_dbWorker, &DatabaseWorker::addMessage);
     connect(this, &AppCore::requestClearChatInDb, m_dbWorker, &DatabaseWorker::clearChat);
     connect(this, &AppCore::requestDeleteContactInDb, m_dbWorker, &DatabaseWorker::deleteContact);
+    connect(this, &AppCore::requestRenameContactInDb, m_dbWorker, &DatabaseWorker::renameContact);
+    connect(this, &AppCore::requestMarkChatAsReadInDb, m_dbWorker, &DatabaseWorker::markChatAsRead);
 
     connect(m_dbWorker, &DatabaseWorker::messagesLoaded, m_messagesModel, &MessagesModel::setMessages);
-    connect(m_dbWorker, &DatabaseWorker::messageAdded, m_messagesModel, &MessagesModel::appendMessage);
+    connect(m_dbWorker, &DatabaseWorker::messageAdded, this, &AppCore::onMessageAdded);
     connect(m_dbWorker, &DatabaseWorker::contactDeleted, m_contactsModel, &ContactsModel::removeContact);
+    connect(m_dbWorker, &DatabaseWorker::contactRenamed, m_contactsModel, &ContactsModel::updateContactName);
+    connect(m_dbWorker, &DatabaseWorker::contactMovedToTop, m_contactsModel, &ContactsModel::moveContactToTop);
+    connect(m_dbWorker, &DatabaseWorker::contactUnreadCountChanged, m_contactsModel, &ContactsModel::updateContactUnreadCount);
 
     connect(m_dbWorker, &DatabaseWorker::messageStatusUpdated, m_messagesModel, &MessagesModel::updateMessageStatus);
     connect(m_dbWorker, &DatabaseWorker::contactStatusChanged, m_contactsModel, &ContactsModel::updateContactStatus);
@@ -117,6 +122,7 @@ void AppCore::requestAddContact(const QString& name, const QString& ip) {
 }
 
 void AppCore::requestLoadMessages(int contactId) {
+    m_currentContactId = contactId;
     emit requestLoadMessagesFromDb(contactId);
 }
 
@@ -127,12 +133,25 @@ void AppCore::requestSendMessage(int contactId, const QString& text) {
 
 void AppCore::requestClearChat(int contactId) {
     emit requestClearChatInDb(contactId);
-    m_messagesModel->clear(); // Очищаем и на фронтенде тоже
+    if (m_currentContactId == contactId) {
+        m_messagesModel->clear(); // Очищаем на фронтенде, только если это текущий чат
+    }
 }
 
 void AppCore::requestDeleteContact(int contactId) {
     emit requestDeleteContactInDb(contactId);
-    m_messagesModel->clear(); // Очищаем сообщения на экране, так как чат удален
+    if (m_currentContactId == contactId) {
+        m_messagesModel->clear(); // Очищаем сообщения на экране
+        m_currentContactId = -1;
+    }
+}
+
+void AppCore::requestRenameContact(int contactId, const QString& newName) {
+    emit requestRenameContactInDb(contactId, newName);
+}
+
+void AppCore::requestMarkChatAsRead(int contactId) {
+    emit requestMarkChatAsReadInDb(contactId);
 }
 
 void AppCore::onNetworkMessageReceived(const QString& ip, const QJsonObject& json) {
@@ -157,5 +176,11 @@ void AppCore::onNetworkMessageReceived(const QString& ip, const QJsonObject& jso
         // Собеседник подтвердил получение! Теперь ставим галочку.
         int msgId = json["msg_id"].toInt();
         QMetaObject::invokeMethod(m_dbWorker, "updateMessageStatus", Qt::QueuedConnection, Q_ARG(int, msgId), Q_ARG(int, 1));
+    }
+}
+
+void AppCore::onMessageAdded(int contactId, const MessageData& message) {
+    if (m_currentContactId == contactId) {
+        m_messagesModel->appendMessage(message);
     }
 }
