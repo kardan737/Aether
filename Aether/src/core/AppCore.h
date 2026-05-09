@@ -39,7 +39,7 @@ signals:
     void requestAddMessageToDb(int contactId, const QString& text, bool isMine, int status);
     void requestClearChatInDb(int contactId);
     void requestDeleteContactInDb(int contactId);
-    void requestProcessIncomingNetworkMessage(const QString& ip, const QString& text);
+    void requestProcessIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName);
 
 private slots:
     void onDbInitialized(bool success, const QString& message);

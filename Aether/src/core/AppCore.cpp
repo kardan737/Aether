@@ -1,6 +1,8 @@
 #include "AppCore.h"
 #include <QDebug>
 #include <QJsonObject>
+#include <QHostAddress>
+#include <QNetworkInterface>
 
 AppCore::AppCore(QObject *parent) : QObject(parent) {
     // Обязательная регистрация типов для работы через Qt::QueuedConnection между потоками
@@ -29,10 +31,14 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(m_networkWorker, &NetworkWorker::serverStarted, this, &AppCore::onNetworkStarted);
     
     connect(m_networkWorker, &NetworkWorker::messageReceived, this, &AppCore::onNetworkMessageReceived);
+    connect(m_networkWorker, &NetworkWorker::peerConnected, m_dbWorker, &DatabaseWorker::handlePeerConnected);
+    connect(m_networkWorker, &NetworkWorker::peerDisconnected, m_dbWorker, &DatabaseWorker::handlePeerDisconnected);
+
     connect(this, &AppCore::sendJsonToNetwork, m_networkWorker, &NetworkWorker::sendJsonMessage);
 
     // Прямая связь: БД напрямую просит Сеть отправить пакет (работает через QueuedConnection)
     connect(m_dbWorker, &DatabaseWorker::requestNetworkSend, m_networkWorker, &NetworkWorker::sendJsonMessage);
+    connect(m_dbWorker, &DatabaseWorker::requestNetworkConnect, m_networkWorker, &NetworkWorker::connectToPeer);
     connect(this, &AppCore::requestProcessIncomingNetworkMessage, m_dbWorker, &DatabaseWorker::processIncomingNetworkMessage);
 
     // Связи работы с контактами
@@ -52,11 +58,8 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(m_dbWorker, &DatabaseWorker::messageAdded, m_messagesModel, &MessagesModel::appendMessage);
     connect(m_dbWorker, &DatabaseWorker::contactDeleted, m_contactsModel, &ContactsModel::removeContact);
 
-    // Связь: успешная отправка по сети мгновенно меняет статус в БД и UI
-    connect(m_networkWorker, &NetworkWorker::messageSent, m_dbWorker, [this](int msgId) {
-        QMetaObject::invokeMethod(m_dbWorker, "updateMessageStatus", Qt::QueuedConnection, Q_ARG(int, msgId), Q_ARG(int, 1));
-    });
     connect(m_dbWorker, &DatabaseWorker::messageStatusUpdated, m_messagesModel, &MessagesModel::updateMessageStatus);
+    connect(m_dbWorker, &DatabaseWorker::contactStatusChanged, m_contactsModel, &ContactsModel::updateContactStatus);
 
     m_dbThread.start();
     m_networkThread.start();
@@ -89,6 +92,23 @@ void AppCore::onNetworkStarted(bool success, const QString& message) {
 }
 
 void AppCore::requestAddContact(const QString& name, const QString& ip) {
+    QHostAddress targetAddress(ip);
+    
+    // 1. Запрещаем добавление петлевых адресов (127.0.0.1, ::1) и нулей
+    if (targetAddress.isLoopback() || ip == "0.0.0.0") {
+        qWarning() << "Aether: Cannot add loopback/localhost as a contact!";
+        return;
+    }
+    
+    // 2. Запрещаем добавление собственных IP-адресов этого компьютера (LAN, VPN)
+    const QList<QHostAddress> localAddresses = QNetworkInterface::allAddresses();
+    for (const QHostAddress &address : localAddresses) {
+        if (address.toString() == ip) {
+            qWarning() << "Aether: Cannot add your own local IP address!";
+            return;
+        }
+    }
+
     emit requestAddContactToDb(name, ip);
     
     // Сразу пытаемся открыть P2P-туннель по указанному IP
@@ -116,11 +136,26 @@ void AppCore::requestDeleteContact(int contactId) {
 }
 
 void AppCore::onNetworkMessageReceived(const QString& ip, const QJsonObject& json) {
-    if (json.contains("type") && json["type"].toString() == "message") {
+    QString type = json["type"].toString();
+    if (type == "message") {
         QString text = json["text"].toString();
-        qDebug() << "Aether P2P: Получено сообщение от" << ip << ":" << text;
+        QString senderName = json.value("sender_name").toString(); // Достаем имя друга
+        
+        qDebug() << "Aether P2P: Received message from" << (senderName.isEmpty() ? ip : senderName) << ":" << text;
         
         // Просим базу данных разобраться, чей это IP, и сохранить текст
-        emit requestProcessIncomingNetworkMessage(ip, text);
+        emit requestProcessIncomingNetworkMessage(ip, text, senderName);
+        
+        // Отправляем "истинную галочку" (ACK) обратно собеседнику
+        if (json.contains("msg_id")) {
+            QJsonObject ack;
+            ack["type"] = "ack";
+            ack["msg_id"] = json["msg_id"].toInt();
+            emit sendJsonToNetwork(0, ip, ack); // ID 0, так как само подтверждение не нужно отслеживать
+        }
+    } else if (type == "ack") {
+        // Собеседник подтвердил получение! Теперь ставим галочку.
+        int msgId = json["msg_id"].toInt();
+        QMetaObject::invokeMethod(m_dbWorker, "updateMessageStatus", Qt::QueuedConnection, Q_ARG(int, msgId), Q_ARG(int, 1));
     }
 }

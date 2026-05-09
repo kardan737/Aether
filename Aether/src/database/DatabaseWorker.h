@@ -27,7 +27,10 @@ public slots:
     void updateMessageStatus(int messageId, int status);
     
     // Обработка входящих сообщений из сети
-    void processIncomingNetworkMessage(const QString& ip, const QString& text);
+    void processIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName);
+    
+    void handlePeerConnected(const QString& ip);
+    void handlePeerDisconnected(const QString& ip);
 
 signals:
     // Сигнал возвращается в UI-поток с результатом
@@ -38,16 +41,22 @@ signals:
     void messageAdded(MessageData message);
     void contactDeleted(int contactId);
     void messageStatusUpdated(int messageId, int status);
+    void contactStatusChanged(int contactId, bool isOnline);
     
     // Сигнал для прямой передачи пакета в сетевой воркер
     void requestNetworkSend(int messageId, const QString& ip, const QJsonObject& json);
+    
+    // Сигнал для попытки подключения (пинг)
+    void requestNetworkConnect(const QString& ip, quint16 port);
 
 private slots:
     void processStoreAndForward();
+    void processPing();
 
 private:
     QSqlDatabase m_db;
     QTimer* m_snfTimer = nullptr;
+    QTimer* m_pingTimer = nullptr;
     
     // Вспомогательный метод создания таблиц
     void createTables();

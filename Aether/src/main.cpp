@@ -5,6 +5,11 @@
 
 int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
+    
+    // Регистрируем приложение для работы QSettings (сохранение никнейма)
+    app.setOrganizationName("AetherTeam");
+    app.setOrganizationDomain("aether.p2p");
+    app.setApplicationName("Aether");
 
     // Инициализируем ядро приложения (создаст потоки БД и Сети)
     AppCore appCore;

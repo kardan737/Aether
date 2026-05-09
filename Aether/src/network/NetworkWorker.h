@@ -28,7 +28,6 @@ signals:
     void peerConnected(const QString& ip);
     void peerDisconnected(const QString& ip);
     void messageReceived(const QString& ip, const QJsonObject& json);
-    void messageSent(int messageId);
 
 private slots:
     void onNewConnection();

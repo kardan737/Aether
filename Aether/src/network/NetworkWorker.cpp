@@ -18,15 +18,14 @@ NetworkWorker::~NetworkWorker() {
 
 void NetworkWorker::startServer(quint16 port) {
     if (m_server->listen(QHostAddress::Any, port)) {
-        emit serverStarted(true, QString("P2P Сервер запущен на порту %1").arg(port));
+        emit serverStarted(true, QString("P2P Server started on port %1").arg(port));
     } else {
-        emit serverStarted(false, "Ошибка запуска сервера: " + m_server->errorString());
+        emit serverStarted(false, "Server startup error: " + m_server->errorString());
     }
 }
 
 void NetworkWorker::connectToPeer(const QString& ip, quint16 port) {
     if (m_clients.contains(ip)) {
-        qDebug() << "Aether Network: Соединение с" << ip << "уже существует.";
         return;
     }
 
@@ -43,8 +42,9 @@ void NetworkWorker::connectToPeer(const QString& ip, quint16 port) {
 
 void NetworkWorker::sendJsonMessage(int messageId, const QString& ip, const QJsonObject& json) {
     if (!m_clients.contains(ip)) {
-        // Если оффлайн - просто прерываем отправку без спама в консоль. 
-        // Таймер Store-and-Forward позже заберет его из БД и попытается снова.
+        // Сокета нет? Значит, пытаемся переподключиться к узлу!
+        // Сообщение пока не отправляем, оно уйдет в следующий тик таймера.
+        connectToPeer(ip, 7777);
         return;
     }
 
@@ -59,7 +59,7 @@ void NetworkWorker::sendJsonMessage(int messageId, const QString& ip, const QJso
         block.append(payload);          // Затем сам JSON Payload
         
         socket->write(block);
-        emit messageSent(messageId); // Уведомляем систему, что пакет ушел в сеть
+        // Мы больше не ставим галочки здесь! Ждем "ack" от собеседника.
     }
 }
 
@@ -85,7 +85,10 @@ void NetworkWorker::onReadyRead() {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
 
-    QString ip = socket->peerAddress().toString();
+    // Берем "чистый" IP из нашего списка, чтобы избежать IPv6 префиксов (::ffff:)
+    // которые ломают поиск по базе данных и создают дубликаты чатов.
+    QString ip = m_clients.key(socket);
+    if (ip.isEmpty()) return;
     
     // 1. Сливаем все новые байты в буфер конкретного клиента
     m_buffers[socket].append(socket->readAll());
@@ -104,7 +107,7 @@ void NetworkWorker::onReadyRead() {
         
         // АРХИТЕКТУРНОЕ ТРЕБОВАНИЕ: Ограничение бинарников (100 МБ = 104857600 байт)
         if (packetSize > 104857600) {
-            qWarning() << "Aether: Пакет превышает 100 МБ! Разрываем соединение в целях безопасности.";
+            qWarning() << "Aether: Packet exceeds 100 MB! Disconnecting for safety.";
             socket->disconnectFromHost();
             return;
         }
@@ -123,7 +126,7 @@ void NetworkWorker::onReadyRead() {
         if (parseError.error == QJsonParseError::NoError && jsonDoc.isObject()) {
             emit messageReceived(ip, jsonDoc.object());
         } else {
-            qWarning() << "Aether: Ошибка парсинга JSON от" << ip;
+            qWarning() << "Aether: JSON parsing error from " << ip;
         }
     }
 }
@@ -131,25 +134,50 @@ void NetworkWorker::onReadyRead() {
 void NetworkWorker::onSocketConnected() {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
-    QString ip = socket->peerAddress().toString();
-    emit peerConnected(ip);
+    
+    // Также используем "чистый" IP при успешном подключении
+    QString ip = m_clients.key(socket);
+    if (!ip.isEmpty()) {
+        emit peerConnected(ip);
+    }
 }
 
 void NetworkWorker::onSocketDisconnected() {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
-    QString ip = socket->peerAddress().toString();
     
-    m_clients.remove(ip);
+    // КРИТИЧЕСКИ ВАЖНО: Ищем сокет в хеш-таблице и удаляем по ключу.
+    // Раньше здесь была ошибка: мы пытались удалить по socket->peerAddress(),
+    // что не работало для сокетов, которые не смогли подключиться.
+    const QString ip = m_clients.key(socket);
+    if (!ip.isEmpty()) {
+        m_clients.remove(ip);
+        emit peerDisconnected(ip);
+    }
+    
     m_buffers.remove(socket); // Обязательно очищаем буфер при отключении
     socket->deleteLater(); // Обязательно освобождаем память асинхронно
-    emit peerDisconnected(ip);
 }
 
 void NetworkWorker::onSocketError(QAbstractSocket::SocketError socketError) {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (socket) {
-        qWarning() << "Aether Network Error:" << socket->errorString();
-        // Ошибки подключения (например, собеседник оффлайн) будут обрабатываться тут
+        // Прячем частые ошибки подключения (собеседник оффлайн, таймаут, нет сети),
+        // чтобы не спамить в консоль каждые 10 секунд при фоновом пинге.
+        if (socketError != QAbstractSocket::ConnectionRefusedError &&
+            socketError != QAbstractSocket::SocketTimeoutError &&
+            socketError != QAbstractSocket::HostNotFoundError &&
+            socketError != QAbstractSocket::NetworkError) {
+            qWarning() << "Aether Network Error:" << socket->errorString();
+        }
+        
+        // ВАЖНО: Если сокет не смог подключиться, сигнал disconnected() НЕ срабатывает.
+        // Очищаем "зомби-сокет", чтобы система могла пытаться переподключиться.
+        if (socket->state() != QAbstractSocket::ConnectedState) {
+            const QString ip = m_clients.key(socket);
+            if (!ip.isEmpty()) m_clients.remove(ip);
+            m_buffers.remove(socket);
+            socket->deleteLater();
+        }
     }
 }

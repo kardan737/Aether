@@ -35,6 +35,7 @@ public slots:
     void setContacts(const QList<ContactData>& contacts);
     void appendContact(const ContactData& contact);
     void removeContact(int contactId);
+    void updateContactStatus(int contactId, bool isOnline);
 
 private:
     QList<ContactData> m_contacts;

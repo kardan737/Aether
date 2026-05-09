@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtCore
 
 Window {
     width: 900
@@ -8,6 +9,12 @@ Window {
     visible: true
     title: "Aether P2P Messenger"
     color: "#1e1e1e" // Темно-серый фон окна
+
+    // Локальное хранилище настроек (синхронизировано с C++)
+    Settings {
+        id: appSettings
+        property string myName: "Аноним"
+    }
 
     // Текущий открытый чат
     property int activeContactId: -1
@@ -107,6 +114,12 @@ Window {
                         placeholderText: "IP-адрес (напр. 10.147.17.5)..."
                         color: "white"
                         font.pixelSize: 13
+                        
+                        // Валидатор не даст ввести ничего, кроме корректного IP-адреса
+                        validator: RegularExpressionValidator {
+                            regularExpression: /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/
+                        }
+                        
                         background: Rectangle {
                             color: "#333333"
                             radius: 4
@@ -334,7 +347,7 @@ Window {
                         text: "📎"
                         Layout.fillHeight: true
                         Layout.preferredWidth: 40
-                        onClicked: console.log("Aether: Ожидание C++ бэкенда для выбора файла (лимит 100 МБ)")
+                        onClicked: console.log("Aether: Waiting for C++ backend for file selection (limit 100 MB)")
                     }
 
                     TextField {
@@ -393,7 +406,13 @@ Window {
             spacing: 15
             Text { text: "Настройки Aether"; color: "white"; font.pixelSize: 18; font.bold: true; Layout.alignment: Qt.AlignHCenter }
             TextField { placeholderText: "P2P Порт (по-умолч. 8080)"; color: "white"; background: Rectangle { color: "#333333"; radius: 4 } }
-            TextField { placeholderText: "Ваш никнейм"; color: "white"; background: Rectangle { color: "#333333"; radius: 4 } }
+            TextField { 
+                placeholderText: "Ваш никнейм"
+                color: "white"
+                text: appSettings.myName
+                onTextChanged: appSettings.myName = text // Сохраняем имя при каждом вводе
+                background: Rectangle { color: "#333333"; radius: 4 } 
+            }
             Button { text: "Сохранить и закрыть"; Layout.alignment: Qt.AlignHCenter; onClicked: settingsPopup.close() }
         }
     }

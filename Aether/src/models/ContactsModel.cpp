@@ -52,3 +52,14 @@ void ContactsModel::removeContact(int contactId) {
         }
     }
 }
+
+void ContactsModel::updateContactStatus(int contactId, bool isOnline) {
+    for (int i = 0; i < m_contacts.size(); ++i) {
+        if (m_contacts[i].id == contactId) {
+            m_contacts[i].isOnline = isOnline;
+            QModelIndex idx = index(i, 0);
+            emit dataChanged(idx, idx, {IsOnlineRole});
+            break;
+        }
+    }
+}
