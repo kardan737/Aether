@@ -45,6 +45,7 @@ void NetworkWorker::sendJsonMessage(int messageId, const QString& ip, const QJso
         // Сокета нет? Значит, пытаемся переподключиться к узлу!
         // Сообщение пока не отправляем, оно уйдет в следующий тик таймера.
         connectToPeer(ip, 7777);
+        if (messageId > 0) emit messageSendFailed(messageId);
         return;
     }
 
@@ -60,6 +61,8 @@ void NetworkWorker::sendJsonMessage(int messageId, const QString& ip, const QJso
         
         socket->write(block);
         // Мы больше не ставим галочки здесь! Ждем "ack" от собеседника.
+    } else {
+        if (messageId > 0) emit messageSendFailed(messageId);
     }
 }
 
@@ -108,9 +111,10 @@ void NetworkWorker::onReadyRead() {
         quint32 packetSize = 0;
         in >> packetSize; // Читаем ожидаемый размер Payload'а
         
-        // АРХИТЕКТУРНОЕ ТРЕБОВАНИЕ: Ограничение бинарников (100 МБ = 104857600 байт)
-        if (packetSize > 104857600) {
-            qWarning() << "Aether: Packet exceeds 100 MB! Disconnecting for safety.";
+        // АРХИТЕКТУРНОЕ ТРЕБОВАНИЕ: Ограничение бинарников
+        // Увеличено до 150 МБ для компенсации накладных расходов Base64.
+        if (packetSize > 157286400) {
+            qWarning() << "Aether: Packet exceeds 150 MB! Disconnecting for safety.";
             socket->disconnectFromHost();
             return;
         }

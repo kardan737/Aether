@@ -7,6 +7,8 @@
 #include <QDateTime>
 #include <QJsonObject>
 #include <QSettings>
+#include <QFile>
+#include <QFileInfo>
 
 DatabaseWorker::DatabaseWorker(QObject *parent) : QObject(parent) {}
 
@@ -55,7 +57,10 @@ void DatabaseWorker::initDatabase() {
 void DatabaseWorker::loadContacts() {
     QList<ContactData> contacts;
     QSqlQuery query(m_db);
-    query.exec("SELECT id, name, last_seen, unread_count FROM contacts ORDER BY last_seen DESC");
+    // Умный запрос: вытягиваем контакты и заодно текст их последнего сообщения
+    query.exec("SELECT c.id, c.name, c.last_seen, c.unread_count, "
+               "(SELECT text FROM messages m WHERE m.contact_id = c.id ORDER BY m.timestamp DESC LIMIT 1) "
+               "FROM contacts c ORDER BY c.last_seen DESC");
     while (query.next()) {
         ContactData c;
         c.id = query.value(0).toInt();
@@ -63,6 +68,7 @@ void DatabaseWorker::loadContacts() {
         c.isOnline = false; // В будущем будет зависеть от P2P сети
         c.decayLevel = 0.0; // В будущем: расчет старения на базе last_seen
         c.unreadCount = query.value(3).toInt();
+        c.lastMessage = query.value(4).toString();
         contacts.append(c);
     }
     emit contactsLoaded(contacts);
@@ -94,6 +100,7 @@ void DatabaseWorker::addContact(const QString& name, const QString& ip) {
         c.isOnline = false;
         c.decayLevel = 0.0;
         c.unreadCount = 0;
+        c.lastMessage = "";
         emit contactAdded(c);
     } else {
         qWarning() << "Error adding contact to DB:" << query.lastError().text();
@@ -120,6 +127,11 @@ void DatabaseWorker::loadMessages(int contactId) {
     emit messagesLoaded(messages);
 }
 
+void DatabaseWorker::addFileMessage(int contactId, const QString& localPath) {
+    QString text = "FILE:" + localPath;
+    addMessage(contactId, text, true, 0); // Используем ту же логику сохранения!
+}
+
 void DatabaseWorker::addMessage(int contactId, const QString& text, bool isMine, int status) {
     QSqlQuery query(m_db);
     qint64 ts = QDateTime::currentSecsSinceEpoch();
@@ -141,6 +153,7 @@ void DatabaseWorker::addMessage(int contactId, const QString& text, bool isMine,
         updateContact.bindValue(":cid", contactId);
         updateContact.exec();
         emit contactMovedToTop(contactId);
+        emit contactLastMessageChanged(contactId, text); // Обновляем предпросмотр сообщения
         
         // Если это наше сообщение, достаем IP контакта и пробрасываем в сеть
         if (isMine) {
@@ -158,7 +171,24 @@ void DatabaseWorker::addMessage(int contactId, const QString& text, bool isMine,
                 QSettings settings;
                 json["sender_name"] = settings.value("myName", "Аноним").toString();
                 
+                if (text.startsWith("FILE:")) {
+                    QString path = text.mid(5);
+                    QFile file(path);
+                    if (file.open(QIODevice::ReadOnly)) {
+                        json["type"] = "file";
+                        json["filename"] = QFileInfo(path).fileName();
+                        json["data"] = QString(file.readAll().toBase64());
+                    } else {
+                        return; // Не смогли прочитать файл
+                    }
+                } else {
+                    json["type"] = "message";
+                    json["text"] = text;
+                }
+                
                 emit requestNetworkSend(m.id, ip, json);
+                
+                m_inFlightMessages.insert(m.id); // Помечаем, что процесс отправки запущен
             }
         }
     } else {
@@ -195,7 +225,7 @@ void DatabaseWorker::processIncomingNetworkMessage(const QString& ip, const QStr
         q.bindValue(":ts", QDateTime::currentSecsSinceEpoch());
         if (q.exec()) {
             contactId = q.lastInsertId().toInt();
-            emit contactAdded(ContactData{contactId, finalName, true, 0.0, 0});
+            emit contactAdded(ContactData{contactId, finalName, true, 0.0, 0, ""});
         }
     }
     
@@ -216,11 +246,64 @@ void DatabaseWorker::processIncomingNetworkMessage(const QString& ip, const QStr
     }
 }
 
+void DatabaseWorker::processIncomingFileMessage(const QString& ip, const QString& filename, const QByteArray& data, const QString& senderName) {
+    QSqlQuery q(m_db);
+    q.prepare("SELECT id FROM contacts WHERE ip_address = :ip LIMIT 1");
+    q.bindValue(":ip", ip);
+    int contactId = -1;
+    
+    QString finalName = senderName.isEmpty() ? ip : senderName;
+    if (q.exec() && q.next()) {
+        contactId = q.value(0).toInt();
+    } else {
+        q.prepare("INSERT INTO contacts (name, ip_address, last_seen) VALUES (:name, :ip, :ts)");
+        q.bindValue(":name", finalName); q.bindValue(":ip", ip); q.bindValue(":ts", QDateTime::currentSecsSinceEpoch());
+        if (q.exec()) {
+            contactId = q.lastInsertId().toInt();
+            emit contactAdded(ContactData{contactId, finalName, true, 0.0, 0, ""});
+        }
+    }
+    
+    // Сохраняем файл физически на диск!
+    QString downloadsPath = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) + "/AetherDownloads";
+    QDir().mkpath(downloadsPath);
+    
+    QString filePath = downloadsPath + "/" + filename;
+    int counter = 1;
+    while (QFile::exists(filePath)) { // Защита от одинаковых имен
+        filePath = downloadsPath + "/" + QString::number(counter++) + "_" + filename;
+    }
+    
+    QFile file(filePath);
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(data);
+        file.close();
+    }
+    
+    QString text = "FILE:" + filePath;
+    addMessage(contactId, text, false, 1); // Сохраняем в БД как файл
+    
+    // Обновляем счетчик
+    QSqlQuery updateUnread(m_db);
+    updateUnread.prepare("UPDATE contacts SET unread_count = unread_count + 1 WHERE id = :id");
+    updateUnread.bindValue(":id", contactId);
+    if (updateUnread.exec()) {
+        QSqlQuery fetchUnread(m_db);
+        fetchUnread.prepare("SELECT unread_count FROM contacts WHERE id = :id");
+        fetchUnread.bindValue(":id", contactId);
+        if (fetchUnread.exec() && fetchUnread.next()) {
+            emit contactUnreadCountChanged(contactId, fetchUnread.value(0).toInt());
+        }
+    }
+}
+
 void DatabaseWorker::clearChat(int contactId) {
     QSqlQuery query(m_db);
     query.prepare("DELETE FROM messages WHERE contact_id = :cid");
     query.bindValue(":cid", contactId);
-    query.exec();
+    if (query.exec()) {
+        emit contactLastMessageChanged(contactId, "");
+    }
 }
 
 void DatabaseWorker::deleteContact(int contactId) {
@@ -258,6 +341,22 @@ void DatabaseWorker::updateMessageStatus(int messageId, int status) {
     if (query.exec()) {
         emit messageStatusUpdated(messageId, status);
     }
+    
+    if (status == 1) { // Если доставлено - убираем из списка In-Flight
+        m_inFlightMessages.remove(messageId);
+    }
+}
+
+void DatabaseWorker::clearCache() {
+    QString downloadsPath = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) + "/AetherDownloads";
+    QDir dir(downloadsPath);
+    if (dir.exists()) {
+        QStringList files = dir.entryList(QDir::Files | QDir::NoDotAndDotDot);
+        for (const QString& file : files) {
+            dir.remove(file); // Физически удаляем файл с жесткого диска
+        }
+        qDebug() << "Aether: Cache cleared, files deleted:" << files.size();
+    }
 }
 
 void DatabaseWorker::markChatAsRead(int contactId) {
@@ -290,8 +389,24 @@ void DatabaseWorker::handlePeerDisconnected(const QString& ip) {
     if (q.exec()) {
         while (q.next()) {
             emit contactStatusChanged(q.value(0).toInt(), false);
+            
+            // Друг отключился. Очищаем список In-Flight для его сообщений, 
+            // чтобы таймер снова подхватил их, когда друг вернется в сеть.
+            int cid = q.value(0).toInt();
+            QSqlQuery msgQ(m_db);
+            msgQ.prepare("SELECT id FROM messages WHERE contact_id = :cid AND status = 0");
+            msgQ.bindValue(":cid", cid);
+            if (msgQ.exec()) {
+                while (msgQ.next()) {
+                    m_inFlightMessages.remove(msgQ.value(0).toInt());
+                }
+            }
         }
     }
+}
+
+void DatabaseWorker::handleMessageSendFailed(int messageId) {
+    m_inFlightMessages.remove(messageId);
 }
 
 void DatabaseWorker::processStoreAndForward() {
@@ -303,8 +418,27 @@ void DatabaseWorker::processStoreAndForward() {
     QString myName = settings.value("myName", "Аноним").toString();
     
     while (query.next()) {
+        int msgId = query.value(0).toInt();
+        if (m_inFlightMessages.contains(msgId)) continue; // Файл УЖЕ отправляется, пропускаем!
+
         QJsonObject json; json["type"] = "message"; json["msg_id"] = query.value(0).toInt(); json["text"] = query.value(1).toString(); json["sender_name"] = myName;
-        emit requestNetworkSend(query.value(0).toInt(), query.value(2).toString(), json);
+        
+        QString text = query.value(1).toString();
+        if (text.startsWith("FILE:")) {
+            QString path = text.mid(5);
+            QFile file(path);
+            if (file.open(QIODevice::ReadOnly)) {
+                json["type"] = "file";
+                json["filename"] = QFileInfo(path).fileName();
+                json["data"] = QString(file.readAll().toBase64());
+            } else { continue; }
+        } else {
+            json["type"] = "message";
+            json["text"] = text;
+        }
+        
+        emit requestNetworkSend(msgId, query.value(2).toString(), json);
+        m_inFlightMessages.insert(msgId);
     }
 }
 

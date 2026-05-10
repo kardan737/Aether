@@ -6,6 +6,7 @@
 #include "models/ContactsModel.h"
 #include "models/MessagesModel.h"
 #include <QJsonObject>
+#include <QUrl>
 
 class AppCore : public QObject {
     Q_OBJECT
@@ -28,6 +29,8 @@ public:
     Q_INVOKABLE void requestDeleteContact(int contactId);
     Q_INVOKABLE void requestRenameContact(int contactId, const QString& newName);
     Q_INVOKABLE void requestMarkChatAsRead(int contactId);
+    Q_INVOKABLE void requestSendFile(int contactId, const QUrl& fileUrl);
+    Q_INVOKABLE void requestClearCache();
 
 signals:
     void startDbInit();
@@ -44,6 +47,9 @@ signals:
     void requestRenameContactInDb(int contactId, const QString& newName);
     void requestProcessIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName);
     void requestMarkChatAsReadInDb(int contactId);
+    void requestAddFileMessageToDb(int contactId, const QString& localPath);
+    void requestProcessIncomingFileMessage(const QString& ip, const QString& filename, const QByteArray& data, const QString& senderName);
+    void requestClearCacheInDb();
 
 private slots:
     void onDbInitialized(bool success, const QString& message);

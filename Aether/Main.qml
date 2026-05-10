@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtCore
+import QtQuick.Dialogs
 
 Window {
     width: 900
@@ -158,6 +159,16 @@ Window {
                     model: appCore.contactsModel
                     clip: true
 
+                    // Ползунок прокрутки списка контактов
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AsNeeded
+                        contentItem: Rectangle {
+                            implicitWidth: 5
+                            radius: 3
+                            color: parent.pressed ? "#4a90e2" : (parent.hovered ? "#666666" : "#444444")
+                        }
+                    }
+
                 // Плавные анимации при перемещении и добавлении контактов
                 add: Transition { NumberAnimation { property: "y"; duration: 250; easing.type: Easing.OutQuad } }
                 move: Transition { NumberAnimation { property: "y"; duration: 250; easing.type: Easing.OutQuad } }
@@ -189,12 +200,26 @@ Window {
                                 Layout.leftMargin: 5
                             }
 
-                            Text {
-                                text: model.name
-                                color: "lightgray"
-                                font.pixelSize: 14
-                                verticalAlignment: Text.AlignVCenter
+                            ColumnLayout {
                                 Layout.fillWidth: true
+                                spacing: 2
+
+                                Text {
+                                    text: model.name
+                                    color: "lightgray"
+                                    font.pixelSize: 14
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                
+                                Text {
+                                    text: model.lastMessage ? (model.lastMessage.startsWith("FILE:") ? "📎 Файл" : model.lastMessage.replace(/\n/g, " ")) : ""
+                                    color: "#888888"
+                                    font.pixelSize: 12
+                                    elide: Text.ElideRight
+                                    maximumLineCount: 1
+                                    Layout.fillWidth: true
+                                }
                             }
                             
                             // Маркер непрочитанных сообщений
@@ -319,6 +344,16 @@ Window {
             topMargin: 15
             bottomMargin: 15
 
+            // Ползунок прокрутки чата
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AsNeeded
+                contentItem: Rectangle {
+                    implicitWidth: 6
+                    radius: 3
+                    color: parent.pressed ? "#4a90e2" : (parent.hovered ? "#666666" : "#444444")
+                }
+            }
+
             model: appCore.messagesModel
             
             // Буфер рендеринга: позволяет заранее отрисовывать элементы за краем экрана,
@@ -363,8 +398,13 @@ Window {
             }
 
             delegate: Item {
+                id: messageDelegate
                 width: ListView.view.width
                 height: msgRow.height
+                
+                property bool isFile: model.text.startsWith("FILE:")
+                property string filePath: isFile ? model.text.substring(5).replace(/\\/g, "/") : ""
+                property bool isImage: isFile && filePath.match(/\.(jpeg|jpg|png|gif|bmp|webp)$/i) !== null
 
                 Row {
                     id: msgRow
@@ -378,19 +418,50 @@ Window {
                     Rectangle {
                         color: model.isMine ? "#2b5278" : "#333333" // Синий для себя, серый для собеседника
                         radius: 8
-                        width: Math.min(Math.max(msgText.implicitWidth + 20, 60), chatView.width * 0.7)
-                        height: msgText.implicitHeight + 30
+                        width: Math.min(Math.max(isImage ? msgImage.implicitWidth + 20 : msgText.implicitWidth + 20, 60), chatView.width * 0.7)
+                        height: (isImage ? msgImage.implicitHeight : msgText.implicitHeight) + 30
+
+                        // Предпросмотр картинки
+                        Image {
+                            id: msgImage
+                            visible: isImage
+                            source: isImage ? "file:///" + filePath : ""
+                            fillMode: Image.PreserveAspectFit
+                            sourceSize.width: 250 // Оптимизация памяти (картинка сожмется для предпросмотра)
+                            sourceSize.height: 250
+                            anchors.top: parent.top
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.topMargin: 8
+                            
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Qt.openUrlExternally("file:///" + filePath)
+                            }
+                        }
 
                         Text {
                             id: msgText
-                            text: model.text
-                            color: "white"
+                            visible: !isImage // Прячем текст, если это картинка
+                            text: isFile ? "📎 " + filePath.substring(filePath.lastIndexOf("/") + 1) : model.text
+                            color: isFile ? "#66b2ff" : "white"
+                            font.underline: isFile
                             font.pixelSize: 14
                             wrapMode: Text.Wrap
                             anchors.top: parent.top
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.topMargin: 8
                             width: parent.width - 20
+                            
+                            // Делаем файл кликабельным
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: isFile
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    Qt.openUrlExternally("file:///" + filePath)
+                                }
+                            }
                         }
 
                         Text {
@@ -432,7 +503,7 @@ Window {
                         text: "📎"
                         Layout.fillHeight: true
                         Layout.preferredWidth: 40
-                        onClicked: console.log("Aether: Waiting for C++ backend for file selection (limit 100 MB)")
+                        onClicked: fileDialog.open()
                     }
 
                     TextField {
@@ -472,7 +543,7 @@ Window {
     Popup {
         id: settingsPopup
         width: 300
-        height: 200
+        height: 250
         x: Math.round((parent.width - width) / 2)
         y: Math.round((parent.height - height) / 2)
         modal: true
@@ -496,6 +567,14 @@ Window {
                 text: appSettings.myName
                 onTextChanged: appSettings.myName = text // Сохраняем имя при каждом вводе
                 background: Rectangle { color: "#333333"; radius: 4 } 
+            }
+            Button { 
+                text: "Очистить кэш файлов"
+                Layout.fillWidth: true
+                onClicked: {
+                    appCore.requestClearCache()
+                    text = "Очищено ✔"
+                }
             }
             Button { text: "Сохранить и закрыть"; Layout.alignment: Qt.AlignHCenter; onClicked: settingsPopup.close() }
         }
@@ -596,6 +675,15 @@ Window {
                     renameChatPopup.close()
                 }
             }
+        }
+    }
+
+    // Системное окно выбора файла
+    FileDialog {
+        id: fileDialog
+        title: "Выберите файл для отправки (до 100 МБ)"
+        onAccepted: {
+            appCore.requestSendFile(activeContactId, selectedFile)
         }
     }
 }

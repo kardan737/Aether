@@ -17,6 +17,7 @@ QVariant ContactsModel::data(const QModelIndex &index, int role) const {
         case IsOnlineRole: return contact.isOnline;
         case DecayLevelRole: return contact.decayLevel;
         case UnreadCountRole: return contact.unreadCount;
+        case LastMessageRole: return contact.lastMessage;
         default: return QVariant();
     }
 }
@@ -28,6 +29,7 @@ QHash<int, QByteArray> ContactsModel::roleNames() const {
     roles[IsOnlineRole] = "isOnline";
     roles[DecayLevelRole] = "decayLevel";
     roles[UnreadCountRole] = "unreadCount";
+    roles[LastMessageRole] = "lastMessage";
     return roles;
 }
 
@@ -50,6 +52,17 @@ void ContactsModel::removeContact(int contactId) {
             beginRemoveRows(QModelIndex(), i, i);
             m_contacts.removeAt(i);
             endRemoveRows();
+            break;
+        }
+    }
+}
+
+void ContactsModel::updateContactLastMessage(int contactId, const QString& lastMessage) {
+    for (int i = 0; i < m_contacts.size(); ++i) {
+        if (m_contacts[i].id == contactId) {
+            m_contacts[i].lastMessage = lastMessage;
+            QModelIndex idx = index(i, 0);
+            emit dataChanged(idx, idx, {LastMessageRole});
             break;
         }
     }

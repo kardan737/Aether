@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QHostAddress>
 #include <QNetworkInterface>
+#include <QFileInfo>
 
 AppCore::AppCore(QObject *parent) : QObject(parent) {
     // Обязательная регистрация типов для работы через Qt::QueuedConnection между потоками
@@ -33,6 +34,7 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(m_networkWorker, &NetworkWorker::messageReceived, this, &AppCore::onNetworkMessageReceived);
     connect(m_networkWorker, &NetworkWorker::peerConnected, m_dbWorker, &DatabaseWorker::handlePeerConnected);
     connect(m_networkWorker, &NetworkWorker::peerDisconnected, m_dbWorker, &DatabaseWorker::handlePeerDisconnected);
+    connect(m_networkWorker, &NetworkWorker::messageSendFailed, m_dbWorker, &DatabaseWorker::handleMessageSendFailed);
 
     connect(this, &AppCore::sendJsonToNetwork, m_networkWorker, &NetworkWorker::sendJsonMessage);
 
@@ -40,6 +42,7 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(m_dbWorker, &DatabaseWorker::requestNetworkSend, m_networkWorker, &NetworkWorker::sendJsonMessage);
     connect(m_dbWorker, &DatabaseWorker::requestNetworkConnect, m_networkWorker, &NetworkWorker::connectToPeer);
     connect(this, &AppCore::requestProcessIncomingNetworkMessage, m_dbWorker, &DatabaseWorker::processIncomingNetworkMessage);
+    connect(this, &AppCore::requestProcessIncomingFileMessage, m_dbWorker, &DatabaseWorker::processIncomingFileMessage);
 
     // Связи работы с контактами
     connect(this, &AppCore::requestLoadContacts, m_dbWorker, &DatabaseWorker::loadContacts);
@@ -51,10 +54,12 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     // Связи работы с сообщениями
     connect(this, &AppCore::requestLoadMessagesFromDb, m_dbWorker, &DatabaseWorker::loadMessages);
     connect(this, &AppCore::requestAddMessageToDb, m_dbWorker, &DatabaseWorker::addMessage);
+    connect(this, &AppCore::requestAddFileMessageToDb, m_dbWorker, &DatabaseWorker::addFileMessage);
     connect(this, &AppCore::requestClearChatInDb, m_dbWorker, &DatabaseWorker::clearChat);
     connect(this, &AppCore::requestDeleteContactInDb, m_dbWorker, &DatabaseWorker::deleteContact);
     connect(this, &AppCore::requestRenameContactInDb, m_dbWorker, &DatabaseWorker::renameContact);
     connect(this, &AppCore::requestMarkChatAsReadInDb, m_dbWorker, &DatabaseWorker::markChatAsRead);
+    connect(this, &AppCore::requestClearCacheInDb, m_dbWorker, &DatabaseWorker::clearCache);
 
     connect(m_dbWorker, &DatabaseWorker::messagesLoaded, m_messagesModel, &MessagesModel::setMessages);
     connect(m_dbWorker, &DatabaseWorker::messageAdded, this, &AppCore::onMessageAdded);
@@ -62,6 +67,7 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(m_dbWorker, &DatabaseWorker::contactRenamed, m_contactsModel, &ContactsModel::updateContactName);
     connect(m_dbWorker, &DatabaseWorker::contactMovedToTop, m_contactsModel, &ContactsModel::moveContactToTop);
     connect(m_dbWorker, &DatabaseWorker::contactUnreadCountChanged, m_contactsModel, &ContactsModel::updateContactUnreadCount);
+    connect(m_dbWorker, &DatabaseWorker::contactLastMessageChanged, m_contactsModel, &ContactsModel::updateContactLastMessage);
 
     connect(m_dbWorker, &DatabaseWorker::messageStatusUpdated, m_messagesModel, &MessagesModel::updateMessageStatus);
     connect(m_dbWorker, &DatabaseWorker::contactStatusChanged, m_contactsModel, &ContactsModel::updateContactStatus);
@@ -131,6 +137,17 @@ void AppCore::requestSendMessage(int contactId, const QString& text) {
     // Отправка в сеть теперь автоматически произойдет внутри DatabaseWorker::addMessage
 }
 
+void AppCore::requestSendFile(int contactId, const QUrl& fileUrl) {
+    QString localPath = fileUrl.toLocalFile();
+    QFileInfo fi(localPath);
+    // Жесткое ограничение 100 МБ для локального файла
+    if (fi.size() > 100 * 1024 * 1024) {
+        qWarning() << "Aether: File is larger than 100 MB!";
+        return;
+    }
+    emit requestAddFileMessageToDb(contactId, localPath);
+}
+
 void AppCore::requestClearChat(int contactId) {
     emit requestClearChatInDb(contactId);
     if (m_currentContactId == contactId) {
@@ -154,6 +171,10 @@ void AppCore::requestMarkChatAsRead(int contactId) {
     emit requestMarkChatAsReadInDb(contactId);
 }
 
+void AppCore::requestClearCache() {
+    emit requestClearCacheInDb();
+}
+
 void AppCore::onNetworkMessageReceived(const QString& ip, const QJsonObject& json) {
     QString type = json["type"].toString();
     if (type == "message") {
@@ -171,6 +192,18 @@ void AppCore::onNetworkMessageReceived(const QString& ip, const QJsonObject& jso
             ack["type"] = "ack";
             ack["msg_id"] = json["msg_id"].toInt();
             emit sendJsonToNetwork(0, ip, ack); // ID 0, так как само подтверждение не нужно отслеживать
+        }
+    } else if (type == "file") {
+        QString filename = json["filename"].toString();
+        QByteArray fileData = QByteArray::fromBase64(json["data"].toString().toUtf8());
+        QString senderName = json.value("sender_name").toString();
+        
+        qDebug() << "Aether P2P: Received FILE from" << (senderName.isEmpty() ? ip : senderName) << ":" << filename;
+        emit requestProcessIncomingFileMessage(ip, filename, fileData, senderName);
+        
+        if (json.contains("msg_id")) {
+            QJsonObject ack; ack["type"] = "ack"; ack["msg_id"] = json["msg_id"].toInt();
+            emit sendJsonToNetwork(0, ip, ack);
         }
     } else if (type == "ack") {
         // Собеседник подтвердил получение! Теперь ставим галочку.

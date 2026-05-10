@@ -11,6 +11,7 @@ struct ContactData {
     bool isOnline;
     double decayLevel;
     int unreadCount;
+    QString lastMessage;
 };
 Q_DECLARE_METATYPE(ContactData)
 Q_DECLARE_METATYPE(QList<ContactData>)
@@ -23,7 +24,8 @@ public:
         NameRole,
         IsOnlineRole,
         DecayLevelRole,
-        UnreadCountRole
+        UnreadCountRole,
+        LastMessageRole
     };
 
     explicit ContactsModel(QObject *parent = nullptr);
@@ -41,6 +43,7 @@ public slots:
     void updateContactName(int contactId, const QString& newName);
     void moveContactToTop(int contactId);
     void updateContactUnreadCount(int contactId, int count);
+    void updateContactLastMessage(int contactId, const QString& lastMessage);
 
 private:
     QList<ContactData> m_contacts;
