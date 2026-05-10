@@ -35,6 +35,7 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(m_networkWorker, &NetworkWorker::peerConnected, m_dbWorker, &DatabaseWorker::handlePeerConnected);
     connect(m_networkWorker, &NetworkWorker::peerDisconnected, m_dbWorker, &DatabaseWorker::handlePeerDisconnected);
     connect(m_networkWorker, &NetworkWorker::messageSendFailed, m_dbWorker, &DatabaseWorker::handleMessageSendFailed);
+    connect(m_networkWorker, &NetworkWorker::messageUploadProgress, this, &AppCore::onMessageUploadProgress);
 
     connect(this, &AppCore::sendJsonToNetwork, m_networkWorker, &NetworkWorker::sendJsonMessage);
 
@@ -216,4 +217,8 @@ void AppCore::onMessageAdded(int contactId, const MessageData& message) {
     if (m_currentContactId == contactId) {
         m_messagesModel->appendMessage(message);
     }
+}
+
+void AppCore::onMessageUploadProgress(int messageId, double progress) {
+    m_messagesModel->updateMessageProgress(messageId, progress);
 }

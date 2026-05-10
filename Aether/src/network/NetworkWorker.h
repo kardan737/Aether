@@ -7,6 +7,12 @@
 #include <QJsonObject>
 #include <QByteArray>
 
+struct PendingMessage {
+    int messageId;
+    qint64 totalBytes;
+    qint64 writtenBytes;
+};
+
 class NetworkWorker : public QObject {
     Q_OBJECT
 public:
@@ -29,10 +35,12 @@ signals:
     void peerDisconnected(const QString& ip);
     void messageReceived(const QString& ip, const QJsonObject& json);
     void messageSendFailed(int messageId);
+    void messageUploadProgress(int messageId, double progress);
 
 private slots:
     void onNewConnection();
     void onReadyRead();
+    void onBytesWritten(qint64 bytes);
     void onSocketDisconnected();
     void onSocketConnected();
     void onSocketError(QAbstractSocket::SocketError socketError);
@@ -44,4 +52,7 @@ private:
 
     // Буферы для склейки разорванных TCP-пакетов
     QHash<QTcpSocket*, QByteArray> m_buffers;
+    
+    // Очередь для отслеживания прогресса отправки файлов
+    QHash<QTcpSocket*, QList<PendingMessage>> m_pendingWrites;
 };

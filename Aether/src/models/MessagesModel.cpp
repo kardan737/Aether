@@ -17,6 +17,7 @@ QVariant MessagesModel::data(const QModelIndex &index, int role) const {
         case IsMineRole: return msg.isMine;
         case StatusRole: return msg.status;
         case TimeRole: return msg.time;
+        case UploadProgressRole: return msg.uploadProgress;
         default: return QVariant();
     }
 }
@@ -28,6 +29,7 @@ QHash<int, QByteArray> MessagesModel::roleNames() const {
     roles[IsMineRole] = "isMine";
     roles[StatusRole] = "status";
     roles[TimeRole] = "time";
+    roles[UploadProgressRole] = "uploadProgress";
     return roles;
 }
 
@@ -55,6 +57,17 @@ void MessagesModel::updateMessageStatus(int messageId, int status) {
             m_messages[i].status = status;
             QModelIndex idx = index(i, 0);
             emit dataChanged(idx, idx, {StatusRole});
+            break;
+        }
+    }
+}
+
+void MessagesModel::updateMessageProgress(int messageId, double progress) {
+    for (int i = 0; i < m_messages.size(); ++i) {
+        if (m_messages[i].id == messageId) {
+            m_messages[i].uploadProgress = progress;
+            QModelIndex idx = index(i, 0);
+            emit dataChanged(idx, idx, {UploadProgressRole});
             break;
         }
     }

@@ -10,6 +10,7 @@ struct MessageData {
     bool isMine;
     int status;
     QString time;
+    double uploadProgress = 0.0;
 };
 Q_DECLARE_METATYPE(MessageData)
 Q_DECLARE_METATYPE(QList<MessageData>)
@@ -22,7 +23,8 @@ public:
         TextRole,
         IsMineRole,
         StatusRole,
-        TimeRole
+        TimeRole,
+        UploadProgressRole
     };
 
     explicit MessagesModel(QObject *parent = nullptr);
@@ -36,6 +38,7 @@ public slots:
     void appendMessage(const MessageData& message);
     void clear();
     void updateMessageStatus(int messageId, int status);
+    void updateMessageProgress(int messageId, double progress);
 
 private:
     QList<MessageData> m_messages;

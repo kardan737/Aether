@@ -33,6 +33,7 @@ void NetworkWorker::connectToPeer(const QString& ip, quint16 port) {
     connect(socket, &QTcpSocket::connected, this, &NetworkWorker::onSocketConnected);
     connect(socket, &QTcpSocket::disconnected, this, &NetworkWorker::onSocketDisconnected);
     connect(socket, &QTcpSocket::readyRead, this, &NetworkWorker::onReadyRead);
+    connect(socket, &QTcpSocket::bytesWritten, this, &NetworkWorker::onBytesWritten);
     connect(socket, &QTcpSocket::errorOccurred, this, &NetworkWorker::onSocketError);
 
     // Записываем заранее, IP можно будет уточнить после подключения
@@ -59,6 +60,7 @@ void NetworkWorker::sendJsonMessage(int messageId, const QString& ip, const QJso
         out << (quint32)payload.size(); // Сначала записываем размер пакета (4 байта)
         block.append(payload);          // Затем сам JSON Payload
         
+        m_pendingWrites[socket].append({messageId, block.size(), 0});
         socket->write(block);
         // Мы больше не ставим галочки здесь! Ждем "ack" от собеседника.
     } else {
@@ -78,6 +80,7 @@ void NetworkWorker::onNewConnection() {
 
         connect(socket, &QTcpSocket::disconnected, this, &NetworkWorker::onSocketDisconnected);
         connect(socket, &QTcpSocket::readyRead, this, &NetworkWorker::onReadyRead);
+        connect(socket, &QTcpSocket::bytesWritten, this, &NetworkWorker::onBytesWritten);
         
         m_clients.insert(ip, socket);
         emit peerConnected(ip);
@@ -138,6 +141,26 @@ void NetworkWorker::onReadyRead() {
     }
 }
 
+void NetworkWorker::onBytesWritten(qint64 bytes) {
+    QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+    if (!socket || !m_pendingWrites.contains(socket)) return;
+    
+    auto& queue = m_pendingWrites[socket];
+    while (bytes > 0 && !queue.isEmpty()) {
+        auto& front = queue.first();
+        qint64 remaining = front.totalBytes - front.writtenBytes;
+        if (bytes >= remaining) {
+            bytes -= remaining;
+            emit messageUploadProgress(front.messageId, 1.0); // 100%
+            queue.removeFirst();
+        } else {
+            front.writtenBytes += bytes;
+            emit messageUploadProgress(front.messageId, (double)front.writtenBytes / front.totalBytes);
+            break;
+        }
+    }
+}
+
 void NetworkWorker::onSocketConnected() {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
@@ -163,6 +186,7 @@ void NetworkWorker::onSocketDisconnected() {
     }
     
     m_buffers.remove(socket); // Обязательно очищаем буфер при отключении
+    m_pendingWrites.remove(socket);
     socket->deleteLater(); // Обязательно освобождаем память асинхронно
 }
 
@@ -184,6 +208,7 @@ void NetworkWorker::onSocketError(QAbstractSocket::SocketError socketError) {
             const QString ip = m_clients.key(socket);
             if (!ip.isEmpty()) m_clients.remove(ip);
             m_buffers.remove(socket);
+            m_pendingWrites.remove(socket);
             socket->deleteLater();
         }
     }

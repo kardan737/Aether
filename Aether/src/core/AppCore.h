@@ -56,6 +56,7 @@ private slots:
     void onNetworkStarted(bool success, const QString& message);
     void onNetworkMessageReceived(const QString& ip, const QJsonObject& json);
     void onMessageAdded(int contactId, const MessageData& message);
+    void onMessageUploadProgress(int messageId, double progress);
 
 private:
     QThread m_dbThread;
