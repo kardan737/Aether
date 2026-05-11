@@ -18,6 +18,7 @@ QVariant ContactsModel::data(const QModelIndex &index, int role) const {
         case DecayLevelRole: return contact.decayLevel;
         case UnreadCountRole: return contact.unreadCount;
         case LastMessageRole: return contact.lastMessage;
+        case OriginalNameRole: return contact.originalName;
         default: return QVariant();
     }
 }
@@ -30,6 +31,7 @@ QHash<int, QByteArray> ContactsModel::roleNames() const {
     roles[DecayLevelRole] = "decayLevel";
     roles[UnreadCountRole] = "unreadCount";
     roles[LastMessageRole] = "lastMessage";
+    roles[OriginalNameRole] = "originalName";
     return roles;
 }
 
@@ -112,4 +114,24 @@ void ContactsModel::updateContactName(int contactId, const QString& newName) {
             break;
         }
     }
+}
+
+void ContactsModel::updateContactOriginalName(int contactId, const QString& originalName) {
+    for (int i = 0; i < m_contacts.size(); ++i) {
+        if (m_contacts[i].id == contactId) {
+            m_contacts[i].originalName = originalName;
+            QModelIndex idx = index(i, 0);
+            emit dataChanged(idx, idx, {OriginalNameRole});
+            break;
+        }
+    }
+}
+
+QString ContactsModel::getContactName(int contactId) const {
+    for (int i = 0; i < m_contacts.size(); ++i) {
+        if (m_contacts[i].id == contactId) {
+            return m_contacts[i].name;
+        }
+    }
+    return "Неизвестный";
 }

@@ -4,6 +4,7 @@ import QtQuick.Controls.Basic as Basic
 import QtQuick.Layouts
 import QtCore
 import QtQuick.Dialogs
+import QtQuick.Effects
 
 Window {
     width: 900
@@ -21,6 +22,17 @@ Window {
     // Текущий открытый чат
     property int activeContactId: -1
     property string activeContactName: ""
+    property string activeContactOriginalName: ""
+
+    // Слушаем обновления "настоящего имени" на лету
+    Connections {
+        target: appCore
+        function onOriginalNameUpdated(contactId, originalName) {
+            if (contactId === activeContactId) {
+                activeContactOriginalName = originalName
+            }
+        }
+    }
 
     // Универсальный стиль для всех кнопок в приложении
     component StyledButton: Rectangle {
@@ -28,20 +40,45 @@ Window {
         
         property alias text: btnText.text
         property alias font: btnText.font
+        property string iconSource: "" // Новое свойство для картинки
         signal clicked()
 
         // Автоматический размер кнопки под текст
-        implicitWidth: btnText.implicitWidth + 24
-        implicitHeight: btnText.implicitHeight + 14
+        implicitWidth: iconSource !== "" ? 40 : btnText.implicitWidth + 24
+        implicitHeight: iconSource !== "" ? 40 : btnText.implicitHeight + 14
         
         // Фон светлеет до чисто белого
         color: mouseArea.pressed ? "#d0d0d0" : (mouseArea.containsMouse ? "#ffffff" : "#333333")
         radius: 5
         Behavior on color { ColorAnimation { duration: 150 } } // Плавная смена цвета фона
 
+        // Своя картинка-иконка
+        Image {
+            id: btnIcon
+            anchors.centerIn: parent
+            source: control.iconSource
+            visible: false // Скрываем оригинальную картинку, её будет рисовать MultiEffect ниже
+            width: 22  // Оптимальный размер значка (золотая середина)
+            height: 22
+            fillMode: Image.PreserveAspectFit
+            mipmap: true // Сглаживание краев
+        }
+        
+        // Эффект перекрашивания картинки
+        MultiEffect {
+            source: btnIcon
+            anchors.fill: btnIcon
+            visible: control.iconSource !== ""
+            colorization: 1.0
+            // При наведении иконка переходит в темно-серый, в спокойном состоянии — белая
+            colorizationColor: mouseArea.pressed || mouseArea.containsMouse ? "#222222" : "white"
+            Behavior on colorizationColor { ColorAnimation { duration: 150 } }
+        }
+
         Text {
             id: btnText
             anchors.centerIn: parent
+            visible: control.iconSource === "" // Прячем текст, если есть картинка
             // Текст становится темным, когда кнопка светлеет
             color: mouseArea.pressed || mouseArea.containsMouse ? "#111111" : "white"
             Behavior on color { ColorAnimation { duration: 150 } } // Плавная смена цвета текста
@@ -57,9 +94,10 @@ Window {
     }
 
     // Функция переключения чата (в будущем это будет вызов C++ метода)
-    function loadChat(id, name) {
+    function loadChat(id, name, originalName) {
         activeContactId = id
         activeContactName = name
+        activeContactOriginalName = originalName || ""
         // Запрашиваем C++ загрузить историю из БД для этого контакта
         appCore.requestLoadMessages(id)
         
@@ -118,14 +156,14 @@ Window {
                 anchors.margins: 10
                 spacing: 10
 
-                // Заголовок
-                Text {
-                    text: "AETHER"
-                    color: "white"
-                    font.pixelSize: 18
-                    font.bold: true
+                // Заголовок-логотип
+                Image {
                     Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
+                    Layout.preferredHeight: 60 // Высота логотипа в пикселях
+                    source: "icons/logo.png"
+                    fillMode: Image.PreserveAspectFit
+                    mipmap: true
+                    horizontalAlignment: Image.AlignHCenter
                 }
 
                 // Сам список контактов
@@ -203,7 +241,7 @@ Window {
                                 }
                                 
                                 Text {
-                                    text: model.lastMessage ? (model.lastMessage.startsWith("FILE:") ? "📎 Файл" : model.lastMessage.replace(/\n/g, " ")) : ""
+                                    text: model.lastMessage ? (model.lastMessage.startsWith("FILE:") ? "[Файл]" : model.lastMessage.replace(/\n/g, " ")) : ""
                                     color: "#888888"
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
@@ -234,7 +272,7 @@ Window {
 
                         onClicked: {
                             // Переключаем чат
-                            loadChat(model.id, model.name)
+                            loadChat(model.id, model.name, model.originalName)
                         }
                     }
                 }
@@ -245,8 +283,7 @@ Window {
                     spacing: 10
 
                     StyledButton {
-                        text: "⚙"
-                        font.pixelSize: 16
+                        iconSource: "icons/settings.png"
                         Layout.preferredWidth: 40
                         Layout.preferredHeight: 40
                         onClicked: settingsPopup.open()
@@ -255,8 +292,7 @@ Window {
                     Item { Layout.fillWidth: true } // Распорка
 
                     StyledButton {
-                        text: "➕"
-                        font.pixelSize: 16
+                        iconSource: "icons/add.png"
                         Layout.preferredWidth: 40
                         Layout.preferredHeight: 40
                         onClicked: addContactPopup.open()
@@ -304,8 +340,7 @@ Window {
                     }
 
                     StyledButton {
-                        text: "✏️"
-                        font.pixelSize: 16
+                        iconSource: "icons/edit.png"
                         Layout.preferredWidth: 40
                         visible: activeContactName !== ""
                         onClicked: {
@@ -315,16 +350,14 @@ Window {
                     }
 
                     StyledButton {
-                        text: "🗑️"
-                        font.pixelSize: 16
+                        iconSource: "icons/delete.png"
                         Layout.preferredWidth: 40
                         visible: activeContactName !== ""
                         onClicked: chatActionsPopup.open()
                     }
 
                     StyledButton {
-                        text: "✖"
-                        font.pixelSize: 16
+                        iconSource: "icons/close.png"
                         Layout.preferredWidth: 40
                         visible: activeContactName !== ""
                         onClicked: {
@@ -404,8 +437,9 @@ Window {
                     var targetY = Math.max(-chatView.topMargin, chatView.contentHeight - chatView.height + chatView.bottomMargin)
                     
                     // Если прыжок слишком большой (например, открыли другой чат с историей) — мотаем мгновенно
-                    if (Math.abs(targetY - chatView.contentY) > chatView.height / 2) {
-                        chatView.contentY = targetY
+                    if (chatView.height === 0 || Math.abs(targetY - chatView.contentY) > chatView.height / 2) {
+                        // Используем надежный встроенный метод вместо ручной установки координаты
+                        chatView.positionViewAtEnd()
                     } else if (targetY > chatView.contentY) {
                         // Если добавилось 1-2 сообщения — плавно прокручиваем, сдвигая старые сообщения вверх
                         smoothScrollAnim.to = targetY
@@ -512,7 +546,7 @@ Window {
                         Text {
                             id: msgText
                             visible: !isImage // Прячем текст, если это картинка
-                            text: isFile ? "📎 " + filePath.substring(filePath.lastIndexOf("/") + 1) : model.text
+                            text: isFile ? "[Файл] " + filePath.substring(filePath.lastIndexOf("/") + 1) : model.text
                             color: isFile ? "#66b2ff" : "white"
                             font.underline: isFile
                             font.pixelSize: 14
@@ -548,7 +582,7 @@ Window {
                             height: 3
                             radius: 1.5
                             color: "#1a3652" // Темный фон полоски
-                            visible: model.isMine && model.status === 0 && model.uploadProgress > 0.0 && isFile
+                            visible: model.isMine && model.status === 0 && isFile
                             anchors.bottom: parent.bottom
                             anchors.bottomMargin: 3
                             anchors.horizontalCenter: parent.horizontalCenter
@@ -566,11 +600,14 @@ Window {
                     }
 
                     // Индикатор Store-and-Forward (только для своих сообщений)
-                    Text {
+                    Image {
                         visible: model.isMine && model.status === 0
-                        text: "🕒"
-                        color: "#999999"
-                        font.pixelSize: 14
+                        source: "icons/clock.png"
+                        width: 16 // Слегка уменьшили часики
+                        height: 16
+                        fillMode: Image.PreserveAspectFit
+                        mipmap: true
+                        opacity: 0.6
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 2
                     }
@@ -592,7 +629,7 @@ Window {
                     spacing: 10
 
                     StyledButton {
-                        text: "📎"
+                        iconSource: "icons/attach.png"
                         Layout.fillHeight: true
                         Layout.preferredWidth: 40
                         onClicked: fileDialog.open()
@@ -644,6 +681,14 @@ Window {
                                 background: null // Фон теперь у внешнего Rectangle
 
                                 Keys.onPressed: (event) => {
+                                    // Перехват вставки из буфера обмена (Ctrl+V)
+                                    if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)) {
+                                        if (appCore.requestPasteFromClipboard(activeContactId)) {
+                                            event.accepted = true // Буфер обработан в C++ (это файл/картинка)
+                                            return
+                                        }
+                                    }
+
                                     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                                         if (event.modifiers & Qt.ControlModifier || event.modifiers & Qt.ShiftModifier) {
                                             msgInput.insert(msgInput.cursorPosition, "\n")
@@ -678,12 +723,16 @@ Window {
     Popup {
         id: settingsPopup
         width: 300
-        height: 250
+        height: 340
         x: Math.round((parent.width - width) / 2)
         y: Math.round((parent.height - height) / 2)
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        
+        onOpened: {
+            localIpField.text = appCore.getLocalIpAddress()
+        }
 
         background: Rectangle {
             color: "#252525"
@@ -703,6 +752,25 @@ Window {
                 onTextChanged: appSettings.myName = text // Сохраняем имя при каждом вводе
                 background: Rectangle { color: "#333333"; radius: 4 } 
             }
+            
+            Text { text: "Ваши IP-адреса (для друзей):"; color: "#888888"; font.pixelSize: 12 }
+            
+            TextArea {
+                id: localIpField
+                Layout.fillWidth: true
+                Layout.maximumHeight: 100 // Чтобы окно не растянуло, если IP-шников много
+                readOnly: true // Запрещаем редактирование
+                color: "#aaaaaa"
+                font.pixelSize: 12
+                clip: true
+                selectByMouse: true // Разрешаем выделять и копировать текст!
+                background: Rectangle { 
+                    color: "#1e1e1e" 
+                    radius: 4 
+                    border.color: "#333333" 
+                }
+            }
+
             StyledButton { 
                 text: "Очистить кэш файлов"
                 Layout.fillWidth: true
@@ -768,7 +836,7 @@ Window {
     Popup {
         id: renameChatPopup
         width: 250
-        height: 150
+        height: 180
         x: Math.round((parent.width - width) / 2)
         y: Math.round((parent.height - height) / 2)
         modal: true
@@ -791,6 +859,14 @@ Window {
                 font.pixelSize: 16 
                 font.bold: true 
                 Layout.alignment: Qt.AlignHCenter 
+            }
+            
+            Text {
+                text: "Настоящее имя: " + activeContactOriginalName
+                color: "#888888"
+                font.pixelSize: 12
+                Layout.alignment: Qt.AlignHCenter
+                visible: activeContactOriginalName !== ""
             }
             
             TextField {

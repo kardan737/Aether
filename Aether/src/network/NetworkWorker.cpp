@@ -51,6 +51,41 @@ void NetworkWorker::sendJsonMessage(int messageId, const QString& ip, const QJso
     }
 
     QTcpSocket* socket = m_clients.value(ip);
+    
+    // --- АНТИ-БЛОКИРОВКА (Fast-Lane) ---
+    // Если сокет забит передачей тяжелого файла (> 1 МБ), а мы шлем срочный текст или системный ACK
+    if (socket->state() == QAbstractSocket::ConnectedState && socket->bytesToWrite() > 1024 * 1024) {
+        if (json.value("type").toString() != "file") {
+            qDebug() << "Aether P2P: Fast-lane activated! Opening temporary socket for urgent message to" << ip;
+            QTcpSocket* fastSocket = new QTcpSocket(this);
+            
+            connect(fastSocket, &QTcpSocket::connected, this, [fastSocket, json]() {
+                QByteArray block;
+                QDataStream out(&block, QIODevice::WriteOnly);
+                out.setVersion(QDataStream::Qt_6_0);
+                QByteArray payload = QJsonDocument(json).toJson(QJsonDocument::Compact);
+                out << (quint32)payload.size();
+                block.append(payload);
+                fastSocket->write(block);
+            });
+            
+            // Как только отправит пакет - отключаемся
+            connect(fastSocket, &QTcpSocket::bytesWritten, this, [fastSocket](qint64 bytes) {
+                if (fastSocket->bytesToWrite() == 0) {
+                    fastSocket->disconnectFromHost();
+                }
+            });
+            
+            // Надежно очищаем память при отключении или ошибке
+            connect(fastSocket, &QTcpSocket::disconnected, fastSocket, &QTcpSocket::deleteLater);
+            connect(fastSocket, &QTcpSocket::errorOccurred, fastSocket, &QTcpSocket::deleteLater);
+            
+            fastSocket->connectToHost(ip, 7777);
+            return; // Выходим, сообщение улетит по параллельному быстрому каналу
+        }
+    }
+    // ------------------------------------
+
     if (socket->state() == QAbstractSocket::ConnectedState) {
         QByteArray block;
         QDataStream out(&block, QIODevice::WriteOnly);
@@ -61,6 +96,9 @@ void NetworkWorker::sendJsonMessage(int messageId, const QString& ip, const QJso
         block.append(payload);          // Затем сам JSON Payload
         
         m_pendingWrites[socket].append({messageId, block.size(), 0});
+        if (messageId > 0) {
+            emit messageUploadProgress(messageId, 0.0); // Явно сбрасываем прогресс в 0 перед началом отправки
+        }
         socket->write(block);
         // Мы больше не ставим галочки здесь! Ждем "ack" от собеседника.
     } else {

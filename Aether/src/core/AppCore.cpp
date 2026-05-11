@@ -4,6 +4,15 @@
 #include <QHostAddress>
 #include <QNetworkInterface>
 #include <QFileInfo>
+#include <QApplication>
+#include <QClipboard>
+#include <QMimeData>
+#include <QImage>
+#include <QDateTime>
+#include <QStandardPaths>
+#include <QDir>
+#include <QIcon>
+#include <QPixmap>
 
 AppCore::AppCore(QObject *parent) : QObject(parent) {
     // Обязательная регистрация типов для работы через Qt::QueuedConnection между потоками
@@ -19,6 +28,14 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     
     m_dbWorker->moveToThread(&m_dbThread);
     m_networkWorker->moveToThread(&m_networkThread);
+    
+    // Создаем системный трей для уведомлений
+    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        m_trayIcon = new QSystemTrayIcon(QIcon(":/qt/qml/Aether/icons/logo.png"), this);
+        m_trayIcon->show();
+    } else {
+        qWarning() << "Aether: System tray is not available on this system.";
+    }
 
     connect(&m_dbThread, &QThread::finished, m_dbWorker, &QObject::deleteLater);
     connect(&m_networkThread, &QThread::finished, m_networkWorker, &QObject::deleteLater);
@@ -69,6 +86,8 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(m_dbWorker, &DatabaseWorker::contactMovedToTop, m_contactsModel, &ContactsModel::moveContactToTop);
     connect(m_dbWorker, &DatabaseWorker::contactUnreadCountChanged, m_contactsModel, &ContactsModel::updateContactUnreadCount);
     connect(m_dbWorker, &DatabaseWorker::contactLastMessageChanged, m_contactsModel, &ContactsModel::updateContactLastMessage);
+    connect(m_dbWorker, &DatabaseWorker::contactOriginalNameChanged, m_contactsModel, &ContactsModel::updateContactOriginalName);
+    connect(m_dbWorker, &DatabaseWorker::contactOriginalNameChanged, this, &AppCore::originalNameUpdated);
 
     connect(m_dbWorker, &DatabaseWorker::messageStatusUpdated, m_messagesModel, &MessagesModel::updateMessageStatus);
     connect(m_dbWorker, &DatabaseWorker::contactStatusChanged, m_contactsModel, &ContactsModel::updateContactStatus);
@@ -149,6 +168,44 @@ void AppCore::requestSendFile(int contactId, const QUrl& fileUrl) {
     emit requestAddFileMessageToDb(contactId, localPath);
 }
 
+bool AppCore::requestPasteFromClipboard(int contactId) {
+    if (contactId == -1) return false;
+    
+    const QClipboard *clipboard = QGuiApplication::clipboard();
+    const QMimeData *mimeData = clipboard->mimeData();
+    if (!mimeData) return false;
+
+    // 1. Проверяем, есть ли файлы (скопированные из проводника)
+    if (mimeData->hasUrls() && !mimeData->urls().isEmpty()) {
+        bool handled = false;
+        for (const QUrl &url : mimeData->urls()) {
+            if (url.isLocalFile()) {
+                requestSendFile(contactId, url);
+                handled = true;
+            }
+        }
+        if (handled) return true; // Прерываем стандартную вставку текста
+    }
+    
+    // 2. Проверяем, есть ли картинка (скопированная из "Ножниц" или браузера)
+    if (mimeData->hasImage()) {
+        QImage image = qvariant_cast<QImage>(mimeData->imageData());
+        if (!image.isNull()) {
+            QString downloadsPath = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) + "/AetherDownloads";
+            QDir().mkpath(downloadsPath);
+            
+            // Сохраняем скриншот во временный файл и отправляем
+            QString filePath = downloadsPath + "/clipboard_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + ".png";
+            if (image.save(filePath, "PNG")) {
+                emit requestAddFileMessageToDb(contactId, filePath);
+                return true; // Прерываем стандартную вставку
+            }
+        }
+    }
+
+    return false; // Это обычный текст, возвращаем false, чтобы QML вставил его в поле
+}
+
 void AppCore::requestClearChat(int contactId) {
     emit requestClearChatInDb(contactId);
     if (m_currentContactId == contactId) {
@@ -174,6 +231,18 @@ void AppCore::requestMarkChatAsRead(int contactId) {
 
 void AppCore::requestClearCache() {
     emit requestClearCacheInDb();
+}
+
+QString AppCore::getLocalIpAddress() {
+    QStringList ipList;
+    const QList<QHostAddress> addresses = QNetworkInterface::allAddresses();
+    for (const QHostAddress &address : addresses) {
+        // Берем только IPv4 и исключаем локальный 127.0.0.1
+        if (address.protocol() == QAbstractSocket::IPv4Protocol && !address.isLoopback()) {
+            ipList.append(address.toString());
+        }
+    }
+    return ipList.isEmpty() ? "Неизвестно" : ipList.join("\n");
 }
 
 void AppCore::onNetworkMessageReceived(const QString& ip, const QJsonObject& json) {
@@ -216,6 +285,21 @@ void AppCore::onNetworkMessageReceived(const QString& ip, const QJsonObject& jso
 void AppCore::onMessageAdded(int contactId, const MessageData& message) {
     if (m_currentContactId == contactId) {
         m_messagesModel->appendMessage(message);
+    }
+    
+    // Системное уведомление при получении нового сообщения (игнорируем свои собственные отправки)
+    if (!message.isMine && m_trayIcon && QApplication::applicationState() != Qt::ApplicationActive) {
+        QString contactName = m_contactsModel->getContactName(contactId);
+        QString displayMsg = message.text;
+        
+        if (displayMsg.startsWith("FILE:")) {
+            QString path = displayMsg.mid(5);
+            displayMsg = "📎 Файл: " + QFileInfo(path).fileName();
+        }
+        
+        QMetaObject::invokeMethod(m_trayIcon, [this, contactName, displayMsg]() {
+            m_trayIcon->showMessage(contactName, displayMsg, QSystemTrayIcon::MessageIcon::Information, 3000);
+        }, Qt::QueuedConnection);
     }
 }
 

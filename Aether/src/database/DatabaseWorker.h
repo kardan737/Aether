@@ -53,6 +53,7 @@ signals:
     void contactMovedToTop(int contactId);
     void contactUnreadCountChanged(int contactId, int count);
     void contactLastMessageChanged(int contactId, const QString& lastMessage);
+    void contactOriginalNameChanged(int contactId, const QString& originalName);
     
     // Сигнал для прямой передачи пакета в сетевой воркер
     void requestNetworkSend(int messageId, const QString& ip, const QJsonObject& json);

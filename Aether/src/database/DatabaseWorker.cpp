@@ -59,7 +59,8 @@ void DatabaseWorker::loadContacts() {
     QSqlQuery query(m_db);
     // Умный запрос: вытягиваем контакты и заодно текст их последнего сообщения
     query.exec("SELECT c.id, c.name, c.last_seen, c.unread_count, "
-               "(SELECT text FROM messages m WHERE m.contact_id = c.id ORDER BY m.timestamp DESC LIMIT 1) "
+               "(SELECT text FROM messages m WHERE m.contact_id = c.id ORDER BY m.timestamp DESC LIMIT 1), "
+               "c.original_name "
                "FROM contacts c ORDER BY c.last_seen DESC");
     while (query.next()) {
         ContactData c;
@@ -69,6 +70,7 @@ void DatabaseWorker::loadContacts() {
         c.decayLevel = 0.0; // В будущем: расчет старения на базе last_seen
         c.unreadCount = query.value(3).toInt();
         c.lastMessage = query.value(4).toString();
+        c.originalName = query.value(5).toString();
         contacts.append(c);
     }
     emit contactsLoaded(contacts);
@@ -101,6 +103,7 @@ void DatabaseWorker::addContact(const QString& name, const QString& ip) {
         c.decayLevel = 0.0;
         c.unreadCount = 0;
         c.lastMessage = "";
+        c.originalName = "";
         emit contactAdded(c);
     } else {
         qWarning() << "Error adding contact to DB:" << query.lastError().text();
@@ -225,7 +228,18 @@ void DatabaseWorker::processIncomingNetworkMessage(const QString& ip, const QStr
         q.bindValue(":ts", QDateTime::currentSecsSinceEpoch());
         if (q.exec()) {
             contactId = q.lastInsertId().toInt();
-            emit contactAdded(ContactData{contactId, finalName, true, 0.0, 0, ""});
+            emit contactAdded(ContactData{contactId, finalName, true, 0.0, 0, "", senderName});
+        }
+    }
+    
+    // Обновляем "настоящее имя" контакта, если друг прислал свой никнейм
+    if (!senderName.isEmpty() && senderName != ip) {
+        QSqlQuery origQ(m_db);
+        origQ.prepare("UPDATE contacts SET original_name = :orig WHERE id = :id");
+        origQ.bindValue(":orig", senderName);
+        origQ.bindValue(":id", contactId);
+        if (origQ.exec()) {
+            emit contactOriginalNameChanged(contactId, senderName);
         }
     }
     
@@ -260,7 +274,18 @@ void DatabaseWorker::processIncomingFileMessage(const QString& ip, const QString
         q.bindValue(":name", finalName); q.bindValue(":ip", ip); q.bindValue(":ts", QDateTime::currentSecsSinceEpoch());
         if (q.exec()) {
             contactId = q.lastInsertId().toInt();
-            emit contactAdded(ContactData{contactId, finalName, true, 0.0, 0, ""});
+            emit contactAdded(ContactData{contactId, finalName, true, 0.0, 0, "", senderName});
+        }
+    }
+    
+    // Обновляем "настоящее имя" для файлов тоже
+    if (!senderName.isEmpty() && senderName != ip) {
+        QSqlQuery origQ(m_db);
+        origQ.prepare("UPDATE contacts SET original_name = :orig WHERE id = :id");
+        origQ.bindValue(":orig", senderName);
+        origQ.bindValue(":id", contactId);
+        if (origQ.exec()) {
+            emit contactOriginalNameChanged(contactId, senderName);
         }
     }
     
@@ -462,6 +487,7 @@ void DatabaseWorker::createTables() {
                
     // Мягкое добавление колонки (для старых баз данных, сработает только 1 раз)
     query.exec("ALTER TABLE contacts ADD COLUMN unread_count INTEGER DEFAULT 0");
+    query.exec("ALTER TABLE contacts ADD COLUMN original_name TEXT DEFAULT ''");
 
     // Таблица сообщений (с поддержкой Store-and-Forward через status)
     query.exec("CREATE TABLE IF NOT EXISTS messages ("

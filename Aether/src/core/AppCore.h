@@ -7,6 +7,7 @@
 #include "models/MessagesModel.h"
 #include <QJsonObject>
 #include <QUrl>
+#include <QSystemTrayIcon>
 
 class AppCore : public QObject {
     Q_OBJECT
@@ -30,7 +31,9 @@ public:
     Q_INVOKABLE void requestRenameContact(int contactId, const QString& newName);
     Q_INVOKABLE void requestMarkChatAsRead(int contactId);
     Q_INVOKABLE void requestSendFile(int contactId, const QUrl& fileUrl);
+    Q_INVOKABLE bool requestPasteFromClipboard(int contactId);
     Q_INVOKABLE void requestClearCache();
+    Q_INVOKABLE QString getLocalIpAddress();
 
 signals:
     void startDbInit();
@@ -50,6 +53,8 @@ signals:
     void requestAddFileMessageToDb(int contactId, const QString& localPath);
     void requestProcessIncomingFileMessage(const QString& ip, const QString& filename, const QByteArray& data, const QString& senderName);
     void requestClearCacheInDb();
+    
+    void originalNameUpdated(int contactId, const QString& originalName);
 
 private slots:
     void onDbInitialized(bool success, const QString& message);
@@ -69,4 +74,6 @@ private:
     MessagesModel* m_messagesModel;
 
     int m_currentContactId = -1;
+    
+    QSystemTrayIcon* m_trayIcon = nullptr;
 };
