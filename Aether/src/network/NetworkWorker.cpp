@@ -26,7 +26,12 @@ void NetworkWorker::startServer(quint16 port) {
 
 void NetworkWorker::connectToPeer(const QString& ip, quint16 port) {
     if (m_clients.contains(ip)) {
-        return;
+        if (m_clients.value(ip)->state() == QAbstractSocket::ConnectedState) return;
+        // Если сокет сломан или завис, удаляем его и подключаемся заново
+        QTcpSocket* oldSocket = m_clients.value(ip);
+        m_clients.remove(ip);
+        oldSocket->disconnectFromHost();
+        oldSocket->deleteLater();
     }
 
     QTcpSocket* socket = new QTcpSocket(this);
@@ -42,67 +47,65 @@ void NetworkWorker::connectToPeer(const QString& ip, quint16 port) {
 }
 
 void NetworkWorker::sendJsonMessage(int messageId, const QString& ip, const QJsonObject& json) {
-    if (!m_clients.contains(ip)) {
-        // Сокета нет? Значит, пытаемся переподключиться к узлу!
-        // Сообщение пока не отправляем, оно уйдет в следующий тик таймера.
-        connectToPeer(ip, 7777);
-        if (messageId > 0) emit messageSendFailed(messageId);
+    // 1. Для ФАЙЛОВ открываем выделенный параллельный канал передачи данных
+    if (json.value("type").toString() == "file") {
+        qDebug() << "Aether P2P: Opening dedicated data channel for FILE to" << ip;
+        QTcpSocket* fileSocket = new QTcpSocket(this);
+        
+        connect(fileSocket, &QTcpSocket::connected, this, [this, fileSocket, json, messageId]() {
+            QByteArray block;
+            QDataStream out(&block, QIODevice::WriteOnly);
+            out.setVersion(QDataStream::Qt_6_0);
+            QByteArray payload = QJsonDocument(json).toJson(QJsonDocument::Compact);
+            out << (quint32)payload.size();
+            block.append(payload);
+            
+            qint64 chunkSize = 512 * 1024; // Кормим ОС кусочками по 512 КБ
+            qint64 toPush = qMin(chunkSize, (qint64)block.size());
+            
+            m_chunkedWriters[fileSocket] = {block, toPush, 0, messageId};
+            if (messageId > 0) emit messageUploadProgress(messageId, 0.0);
+            
+            fileSocket->write(block.constData(), toPush);
+        });
+        
+        connect(fileSocket, &QTcpSocket::bytesWritten, this, &NetworkWorker::onBytesWritten);
+        
+        connect(fileSocket, &QTcpSocket::disconnected, this, [this, fileSocket]() {
+            m_chunkedWriters.remove(fileSocket);
+            fileSocket->deleteLater();
+        });
+        connect(fileSocket, &QTcpSocket::errorOccurred, this, [this, fileSocket, messageId](QAbstractSocket::SocketError err) {
+            bool wasComplete = false;
+            if (m_chunkedWriters.contains(fileSocket)) {
+                wasComplete = (m_chunkedWriters[fileSocket].writtenToOS >= m_chunkedWriters[fileSocket].data.size());
+                m_chunkedWriters.remove(fileSocket);
+            }
+            fileSocket->deleteLater();
+            // Не считаем ошибкой, если файл уже был полностью передан в ОС
+            if (messageId > 0 && !wasComplete) emit messageSendFailed(messageId);
+        });
+        
+        fileSocket->connectToHost(ip, 7777);
         return;
     }
 
-    QTcpSocket* socket = m_clients.value(ip);
-    
-    // --- АНТИ-БЛОКИРОВКА (Fast-Lane) ---
-    // Если сокет забит передачей тяжелого файла (> 1 МБ), а мы шлем срочный текст или системный ACK
-    if (socket->state() == QAbstractSocket::ConnectedState && socket->bytesToWrite() > 1024 * 1024) {
-        if (json.value("type").toString() != "file") {
-            qDebug() << "Aether P2P: Fast-lane activated! Opening temporary socket for urgent message to" << ip;
-            QTcpSocket* fastSocket = new QTcpSocket(this);
-            
-            connect(fastSocket, &QTcpSocket::connected, this, [fastSocket, json]() {
-                QByteArray block;
-                QDataStream out(&block, QIODevice::WriteOnly);
-                out.setVersion(QDataStream::Qt_6_0);
-                QByteArray payload = QJsonDocument(json).toJson(QJsonDocument::Compact);
-                out << (quint32)payload.size();
-                block.append(payload);
-                fastSocket->write(block);
-            });
-            
-            // Как только отправит пакет - отключаемся
-            connect(fastSocket, &QTcpSocket::bytesWritten, this, [fastSocket](qint64 bytes) {
-                if (fastSocket->bytesToWrite() == 0) {
-                    fastSocket->disconnectFromHost();
-                }
-            });
-            
-            // Надежно очищаем память при отключении или ошибке
-            connect(fastSocket, &QTcpSocket::disconnected, fastSocket, &QTcpSocket::deleteLater);
-            connect(fastSocket, &QTcpSocket::errorOccurred, fastSocket, &QTcpSocket::deleteLater);
-            
-            fastSocket->connectToHost(ip, 7777);
-            return; // Выходим, сообщение улетит по параллельному быстрому каналу
-        }
+    // 2. Для ТЕКСТА и СИСТЕМНЫХ ACK используем мгновенный основной сокет
+    if (!m_clients.contains(ip) || m_clients.value(ip)->state() != QAbstractSocket::ConnectedState) {
+        connectToPeer(ip, 7777);
     }
-    // ------------------------------------
 
-    if (socket->state() == QAbstractSocket::ConnectedState) {
+    QTcpSocket* socket = m_clients.value(ip);
+    if (socket) {
         QByteArray block;
         QDataStream out(&block, QIODevice::WriteOnly);
         out.setVersion(QDataStream::Qt_6_0);
         
         QByteArray payload = QJsonDocument(json).toJson(QJsonDocument::Compact);
-        out << (quint32)payload.size(); // Сначала записываем размер пакета (4 байта)
-        block.append(payload);          // Затем сам JSON Payload
+        out << (quint32)payload.size();
+        block.append(payload);
         
-        m_pendingWrites[socket].append({messageId, block.size(), 0});
-        if (messageId > 0) {
-            emit messageUploadProgress(messageId, 0.0); // Явно сбрасываем прогресс в 0 перед началом отправки
-        }
-        socket->write(block);
-        // Мы больше не ставим галочки здесь! Ждем "ack" от собеседника.
-    } else {
-        if (messageId > 0) emit messageSendFailed(messageId);
+        socket->write(block); // Qt умный: он поместит это в буфер и отправит сразу, как только сокет подключится!
     }
 }
 
@@ -120,8 +123,16 @@ void NetworkWorker::onNewConnection() {
         connect(socket, &QTcpSocket::readyRead, this, &NetworkWorker::onReadyRead);
         connect(socket, &QTcpSocket::bytesWritten, this, &NetworkWorker::onBytesWritten);
         
-        m_clients.insert(ip, socket);
-        emit peerConnected(ip);
+        // ЗАЩИТА ОТ ПЕРЕЗАПИСИ (Главный фикс стабильности)
+        // Если это параллельный сокет для передачи файла, мы не ломаем им основной канал управления!
+        if (!m_clients.contains(ip) || m_clients.value(ip)->state() != QAbstractSocket::ConnectedState) {
+            if (m_clients.contains(ip)) {
+                m_clients.value(ip)->disconnectFromHost();
+                m_clients.value(ip)->deleteLater();
+            }
+            m_clients.insert(ip, socket);
+            emit peerConnected(ip);
+        }
     }
 }
 
@@ -181,20 +192,30 @@ void NetworkWorker::onReadyRead() {
 
 void NetworkWorker::onBytesWritten(qint64 bytes) {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
-    if (!socket || !m_pendingWrites.contains(socket)) return;
+    if (!socket) return;
     
-    auto& queue = m_pendingWrites[socket];
-    while (bytes > 0 && !queue.isEmpty()) {
-        auto& front = queue.first();
-        qint64 remaining = front.totalBytes - front.writtenBytes;
-        if (bytes >= remaining) {
-            bytes -= remaining;
-            emit messageUploadProgress(front.messageId, 1.0); // 100%
-            queue.removeFirst();
-        } else {
-            front.writtenBytes += bytes;
-            emit messageUploadProgress(front.messageId, (double)front.writtenBytes / front.totalBytes);
-            break;
+    if (m_chunkedWriters.contains(socket)) {
+        auto& writer = m_chunkedWriters[socket];
+        writer.writtenToOS += bytes;
+        
+        if (writer.messageId > 0) {
+            emit messageUploadProgress(writer.messageId, (double)writer.writtenToOS / writer.data.size());
+        }
+        
+        // Поддерживаем в буфере сокета не более chunkSize
+        qint64 chunkSize = 512 * 1024;
+        qint64 unwrittenInSocket = writer.pushedToSocket - writer.writtenToOS;
+        
+        if (unwrittenInSocket < chunkSize && writer.pushedToSocket < writer.data.size()) {
+            qint64 toPush = qMin(chunkSize - unwrittenInSocket, (qint64)(writer.data.size() - writer.pushedToSocket));
+            if (toPush > 0) {
+                socket->write(writer.data.constData() + writer.pushedToSocket, toPush);
+                writer.pushedToSocket += toPush;
+            }
+        }
+        
+        if (writer.writtenToOS >= writer.data.size()) {
+            socket->disconnectFromHost();
         }
     }
 }
@@ -224,7 +245,7 @@ void NetworkWorker::onSocketDisconnected() {
     }
     
     m_buffers.remove(socket); // Обязательно очищаем буфер при отключении
-    m_pendingWrites.remove(socket);
+    m_chunkedWriters.remove(socket);
     socket->deleteLater(); // Обязательно освобождаем память асинхронно
 }
 
@@ -244,9 +265,12 @@ void NetworkWorker::onSocketError(QAbstractSocket::SocketError socketError) {
         // Очищаем "зомби-сокет", чтобы система могла пытаться переподключиться.
         if (socket->state() != QAbstractSocket::ConnectedState) {
             const QString ip = m_clients.key(socket);
-            if (!ip.isEmpty()) m_clients.remove(ip);
+            if (!ip.isEmpty()) {
+                m_clients.remove(ip);
+                emit peerDisconnected(ip); // ВСЕГДА уведомляем интерфейс о потере связи!
+            }
             m_buffers.remove(socket);
-            m_pendingWrites.remove(socket);
+            m_chunkedWriters.remove(socket);
             socket->deleteLater();
         }
     }

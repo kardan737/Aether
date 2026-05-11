@@ -47,8 +47,8 @@ Window {
         implicitWidth: iconSource !== "" ? 40 : btnText.implicitWidth + 24
         implicitHeight: iconSource !== "" ? 40 : btnText.implicitHeight + 14
         
-        // Фон светлеет до чисто белого
-        color: mouseArea.pressed ? "#d0d0d0" : (mouseArea.containsMouse ? "#ffffff" : "#333333")
+        // Фон прозрачный для иконок в покое. При наведении светлеет до белого. Текстовые кнопки остаются серыми.
+        color: mouseArea.pressed ? "#d0d0d0" : (mouseArea.containsMouse ? "#ffffff" : (control.iconSource !== "" ? "transparent" : "#333333"))
         radius: 5
         Behavior on color { ColorAnimation { duration: 150 } } // Плавная смена цвета фона
 
@@ -159,7 +159,7 @@ Window {
                 // Заголовок-логотип
                 Image {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 60 // Высота логотипа в пикселях
+                    Layout.preferredHeight: 90 // Высота логотипа в пикселях
                     source: "icons/logo.png"
                     fillMode: Image.PreserveAspectFit
                     mipmap: true
@@ -206,9 +206,6 @@ Window {
                         width: parent.width
                         text: model.name
                         hoverEnabled: true
-                    
-                    // Визуализация Data Decay (Эффект старения)
-                    opacity: 1.0 - (model.decayLevel * 0.7)
 
                         // Умный фон: меняет цвет при наведении и нажатии
                         background: Rectangle {
@@ -326,7 +323,8 @@ Window {
                 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 10
+                    anchors.leftMargin: 15
+                    anchors.rightMargin: 15
                     spacing: 10
 
                     Text {
@@ -342,6 +340,8 @@ Window {
                     StyledButton {
                         iconSource: "icons/edit.png"
                         Layout.preferredWidth: 40
+                        Layout.preferredHeight: 40
+                        Layout.alignment: Qt.AlignVCenter
                         visible: activeContactName !== ""
                         onClicked: {
                             renameInput.text = activeContactName
@@ -352,6 +352,8 @@ Window {
                     StyledButton {
                         iconSource: "icons/delete.png"
                         Layout.preferredWidth: 40
+                        Layout.preferredHeight: 40
+                        Layout.alignment: Qt.AlignVCenter
                         visible: activeContactName !== ""
                         onClicked: chatActionsPopup.open()
                     }
@@ -359,6 +361,8 @@ Window {
                     StyledButton {
                         iconSource: "icons/close.png"
                         Layout.preferredWidth: 40
+                        Layout.preferredHeight: 40
+                        Layout.alignment: Qt.AlignVCenter
                         visible: activeContactName !== ""
                         onClicked: {
                             activeContactId = -1

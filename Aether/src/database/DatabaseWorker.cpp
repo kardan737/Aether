@@ -67,7 +67,6 @@ void DatabaseWorker::loadContacts() {
         c.id = query.value(0).toInt();
         c.name = query.value(1).toString();
         c.isOnline = false; // В будущем будет зависеть от P2P сети
-        c.decayLevel = 0.0; // В будущем: расчет старения на базе last_seen
         c.unreadCount = query.value(3).toInt();
         c.lastMessage = query.value(4).toString();
         c.originalName = query.value(5).toString();
@@ -100,7 +99,6 @@ void DatabaseWorker::addContact(const QString& name, const QString& ip) {
         c.id = query.lastInsertId().toInt();
         c.name = name;
         c.isOnline = false;
-        c.decayLevel = 0.0;
         c.unreadCount = 0;
         c.lastMessage = "";
         c.originalName = "";
@@ -228,7 +226,7 @@ void DatabaseWorker::processIncomingNetworkMessage(const QString& ip, const QStr
         q.bindValue(":ts", QDateTime::currentSecsSinceEpoch());
         if (q.exec()) {
             contactId = q.lastInsertId().toInt();
-            emit contactAdded(ContactData{contactId, finalName, true, 0.0, 0, "", senderName});
+            emit contactAdded(ContactData{contactId, finalName, true, 0, "", senderName});
         }
     }
     
@@ -274,7 +272,7 @@ void DatabaseWorker::processIncomingFileMessage(const QString& ip, const QString
         q.bindValue(":name", finalName); q.bindValue(":ip", ip); q.bindValue(":ts", QDateTime::currentSecsSinceEpoch());
         if (q.exec()) {
             contactId = q.lastInsertId().toInt();
-            emit contactAdded(ContactData{contactId, finalName, true, 0.0, 0, "", senderName});
+            emit contactAdded(ContactData{contactId, finalName, true, 0, "", senderName});
         }
     }
     

@@ -15,7 +15,6 @@ QVariant ContactsModel::data(const QModelIndex &index, int role) const {
         case IdRole: return contact.id;
         case NameRole: return contact.name;
         case IsOnlineRole: return contact.isOnline;
-        case DecayLevelRole: return contact.decayLevel;
         case UnreadCountRole: return contact.unreadCount;
         case LastMessageRole: return contact.lastMessage;
         case OriginalNameRole: return contact.originalName;
@@ -28,7 +27,6 @@ QHash<int, QByteArray> ContactsModel::roleNames() const {
     roles[IdRole] = "id";
     roles[NameRole] = "name";
     roles[IsOnlineRole] = "isOnline";
-    roles[DecayLevelRole] = "decayLevel";
     roles[UnreadCountRole] = "unreadCount";
     roles[LastMessageRole] = "lastMessage";
     roles[OriginalNameRole] = "originalName";

@@ -9,7 +9,6 @@ struct ContactData {
     int id;
     QString name;
     bool isOnline;
-    double decayLevel;
     int unreadCount;
     QString lastMessage;
     QString originalName;
@@ -24,7 +23,6 @@ public:
         IdRole = Qt::UserRole + 1,
         NameRole,
         IsOnlineRole,
-        DecayLevelRole,
         UnreadCountRole,
         LastMessageRole,
         OriginalNameRole

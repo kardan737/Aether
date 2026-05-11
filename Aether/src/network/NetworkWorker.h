@@ -7,10 +7,11 @@
 #include <QJsonObject>
 #include <QByteArray>
 
-struct PendingMessage {
-    int messageId;
-    qint64 totalBytes;
-    qint64 writtenBytes;
+struct ChunkedWriter {
+    QByteArray data;         // Сам файл в памяти
+    qint64 pushedToSocket;   // Сколько отдали в QTcpSocket
+    qint64 writtenToOS;      // Сколько реально ушло в интернет
+    int messageId;           // ID для прогресс-бара
 };
 
 class NetworkWorker : public QObject {
@@ -53,6 +54,6 @@ private:
     // Буферы для склейки разорванных TCP-пакетов
     QHash<QTcpSocket*, QByteArray> m_buffers;
     
-    // Очередь для отслеживания прогресса отправки файлов
-    QHash<QTcpSocket*, QList<PendingMessage>> m_pendingWrites;
+    // Отслеживание отправки тяжелых файлов по кускам
+    QHash<QTcpSocket*, ChunkedWriter> m_chunkedWriters;
 };
