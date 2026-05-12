@@ -11,6 +11,7 @@ struct MessageData {
     int status;
     QString time;
     double uploadProgress = 0.0;
+    QString replyText = "";
 };
 Q_DECLARE_METATYPE(MessageData)
 Q_DECLARE_METATYPE(QList<MessageData>)
@@ -24,7 +25,8 @@ public:
         IsMineRole,
         StatusRole,
         TimeRole,
-        UploadProgressRole
+        UploadProgressRole,
+        ReplyTextRole
     };
 
     explicit MessagesModel(QObject *parent = nullptr);

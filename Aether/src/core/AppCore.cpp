@@ -152,12 +152,12 @@ void AppCore::requestLoadMessages(int contactId) {
     emit requestLoadMessagesFromDb(contactId);
 }
 
-void AppCore::requestSendMessage(int contactId, const QString& text) {
-    emit requestAddMessageToDb(contactId, text, true, 0); // isMine=true, status=0 (ожидает)
+void AppCore::requestSendMessage(int contactId, const QString& text, const QString& replyText) {
+    emit requestAddMessageToDb(contactId, text, true, 0, replyText);
     // Отправка в сеть теперь автоматически произойдет внутри DatabaseWorker::addMessage
 }
 
-void AppCore::requestSendFile(int contactId, const QUrl& fileUrl) {
+void AppCore::requestSendFile(int contactId, const QUrl& fileUrl, const QString& replyText) {
     QString localPath = fileUrl.toLocalFile();
     QFileInfo fi(localPath);
     // Жесткое ограничение 100 МБ для локального файла
@@ -165,10 +165,10 @@ void AppCore::requestSendFile(int contactId, const QUrl& fileUrl) {
         qWarning() << "Aether: File is larger than 100 MB!";
         return;
     }
-    emit requestAddFileMessageToDb(contactId, localPath);
+    emit requestAddFileMessageToDb(contactId, localPath, replyText);
 }
 
-bool AppCore::requestPasteFromClipboard(int contactId) {
+bool AppCore::requestPasteFromClipboard(int contactId, const QString& replyText) {
     if (contactId == -1) return false;
     
     const QClipboard *clipboard = QGuiApplication::clipboard();
@@ -180,7 +180,7 @@ bool AppCore::requestPasteFromClipboard(int contactId) {
         bool handled = false;
         for (const QUrl &url : mimeData->urls()) {
             if (url.isLocalFile()) {
-                requestSendFile(contactId, url);
+                requestSendFile(contactId, url, replyText);
                 handled = true;
             }
         }
@@ -197,13 +197,20 @@ bool AppCore::requestPasteFromClipboard(int contactId) {
             // Сохраняем скриншот во временный файл и отправляем
             QString filePath = downloadsPath + "/clipboard_" + QString::number(QDateTime::currentMSecsSinceEpoch()) + ".png";
             if (image.save(filePath, "PNG")) {
-                emit requestAddFileMessageToDb(contactId, filePath);
+                emit requestAddFileMessageToDb(contactId, filePath, replyText);
                 return true; // Прерываем стандартную вставку
             }
         }
     }
 
     return false; // Это обычный текст, возвращаем false, чтобы QML вставил его в поле
+}
+
+void AppCore::copyToClipboard(const QString& text) {
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    if (clipboard) {
+        clipboard->setText(text);
+    }
 }
 
 void AppCore::requestClearChat(int contactId) {
@@ -250,11 +257,12 @@ void AppCore::onNetworkMessageReceived(const QString& ip, const QJsonObject& jso
     if (type == "message") {
         QString text = json["text"].toString();
         QString senderName = json.value("sender_name").toString(); // Достаем имя друга
+        QString replyText = json.value("reply_text").toString();
         
         qDebug() << "Aether P2P: Received message from" << (senderName.isEmpty() ? ip : senderName) << ":" << text;
         
         // Просим базу данных разобраться, чей это IP, и сохранить текст
-        emit requestProcessIncomingNetworkMessage(ip, text, senderName);
+        emit requestProcessIncomingNetworkMessage(ip, text, senderName, replyText);
         
         // Отправляем "истинную галочку" (ACK) обратно собеседнику
         if (json.contains("msg_id")) {
@@ -267,9 +275,10 @@ void AppCore::onNetworkMessageReceived(const QString& ip, const QJsonObject& jso
         QString filename = json["filename"].toString();
         QByteArray fileData = QByteArray::fromBase64(json["data"].toString().toUtf8());
         QString senderName = json.value("sender_name").toString();
+        QString replyText = json.value("reply_text").toString();
         
         qDebug() << "Aether P2P: Received FILE from" << (senderName.isEmpty() ? ip : senderName) << ":" << filename;
-        emit requestProcessIncomingFileMessage(ip, filename, fileData, senderName);
+        emit requestProcessIncomingFileMessage(ip, filename, fileData, senderName, replyText);
         
         if (json.contains("msg_id")) {
             QJsonObject ack; ack["type"] = "ack"; ack["msg_id"] = json["msg_id"].toInt();

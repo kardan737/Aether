@@ -33,6 +33,7 @@ qt_add_qml_module(appAether
         icons/attach.png
         icons/clock.png
         icons/logo.png
+        icons/send.png
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.

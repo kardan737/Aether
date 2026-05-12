@@ -20,10 +20,10 @@ public slots:
     // Слоты для работы с БД
     void loadContacts();
     void addContact(const QString& name, const QString& ip);
-    void addFileMessage(int contactId, const QString& localPath);
+    void addFileMessage(int contactId, const QString& localPath, const QString& replyText = "");
     
     void loadMessages(int contactId);
-    void addMessage(int contactId, const QString& text, bool isMine, int status);
+    void addMessage(int contactId, const QString& text, bool isMine, int status, const QString& replyText = "");
     void clearChat(int contactId);
     void deleteContact(int contactId);
     void renameContact(int contactId, const QString& newName);
@@ -32,8 +32,8 @@ public slots:
     void clearCache();
     
     // Обработка входящих сообщений из сети
-    void processIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName);
-    void processIncomingFileMessage(const QString& ip, const QString& filename, const QByteArray& data, const QString& senderName);
+    void processIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName, const QString& replyText = "");
+    void processIncomingFileMessage(const QString& ip, const QString& filename, const QByteArray& data, const QString& senderName, const QString& replyText = "");
     
     void handlePeerConnected(const QString& ip);
     void handlePeerDisconnected(const QString& ip);

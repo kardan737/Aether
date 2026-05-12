@@ -18,6 +18,7 @@ QVariant MessagesModel::data(const QModelIndex &index, int role) const {
         case StatusRole: return msg.status;
         case TimeRole: return msg.time;
         case UploadProgressRole: return msg.uploadProgress;
+        case ReplyTextRole: return msg.replyText;
         default: return QVariant();
     }
 }
@@ -30,6 +31,7 @@ QHash<int, QByteArray> MessagesModel::roleNames() const {
     roles[StatusRole] = "status";
     roles[TimeRole] = "time";
     roles[UploadProgressRole] = "uploadProgress";
+    roles[ReplyTextRole] = "replyText";
     return roles;
 }
 

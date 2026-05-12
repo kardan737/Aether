@@ -25,15 +25,16 @@ public:
     // Метод, который мы сможем вызывать из QML (JS)
     Q_INVOKABLE void requestAddContact(const QString& name, const QString& ip);
     Q_INVOKABLE void requestLoadMessages(int contactId);
-    Q_INVOKABLE void requestSendMessage(int contactId, const QString& text);
+    Q_INVOKABLE void requestSendMessage(int contactId, const QString& text, const QString& replyText = "");
     Q_INVOKABLE void requestClearChat(int contactId);
     Q_INVOKABLE void requestDeleteContact(int contactId);
     Q_INVOKABLE void requestRenameContact(int contactId, const QString& newName);
     Q_INVOKABLE void requestMarkChatAsRead(int contactId);
-    Q_INVOKABLE void requestSendFile(int contactId, const QUrl& fileUrl);
-    Q_INVOKABLE bool requestPasteFromClipboard(int contactId);
+    Q_INVOKABLE void requestSendFile(int contactId, const QUrl& fileUrl, const QString& replyText = "");
+    Q_INVOKABLE bool requestPasteFromClipboard(int contactId, const QString& replyText = "");
     Q_INVOKABLE void requestClearCache();
     Q_INVOKABLE QString getLocalIpAddress();
+    Q_INVOKABLE void copyToClipboard(const QString& text);
 
 signals:
     void startDbInit();
@@ -44,14 +45,14 @@ signals:
     void requestLoadContacts();
     void requestAddContactToDb(const QString& name, const QString& ip);
     void requestLoadMessagesFromDb(int contactId);
-    void requestAddMessageToDb(int contactId, const QString& text, bool isMine, int status);
+    void requestAddMessageToDb(int contactId, const QString& text, bool isMine, int status, const QString& replyText);
     void requestClearChatInDb(int contactId);
     void requestDeleteContactInDb(int contactId);
     void requestRenameContactInDb(int contactId, const QString& newName);
-    void requestProcessIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName);
+    void requestProcessIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName, const QString& replyText);
     void requestMarkChatAsReadInDb(int contactId);
-    void requestAddFileMessageToDb(int contactId, const QString& localPath);
-    void requestProcessIncomingFileMessage(const QString& ip, const QString& filename, const QByteArray& data, const QString& senderName);
+    void requestAddFileMessageToDb(int contactId, const QString& localPath, const QString& replyText);
+    void requestProcessIncomingFileMessage(const QString& ip, const QString& filename, const QByteArray& data, const QString& senderName, const QString& replyText);
     void requestClearCacheInDb();
     
     void originalNameUpdated(int contactId, const QString& originalName);

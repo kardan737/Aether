@@ -7,6 +7,7 @@ import QtQuick.Dialogs
 import QtQuick.Effects
 
 Window {
+    id: mainWindow
     width: 900
     height: 600
     visible: true
@@ -23,6 +24,9 @@ Window {
     property int activeContactId: -1
     property string activeContactName: ""
     property string activeContactOriginalName: ""
+    
+    // Текст сообщения, на которое мы отвечаем в данный момент
+    property string currentReplyText: ""
 
     // Слушаем обновления "настоящего имени" на лету
     Connections {
@@ -98,6 +102,7 @@ Window {
         activeContactId = id
         activeContactName = name
         activeContactOriginalName = originalName || ""
+        mainWindow.currentReplyText = "" // Сбрасываем ответ при смене чата
         // Запрашиваем C++ загрузить историю из БД для этого контакта
         appCore.requestLoadMessages(id)
         
@@ -108,8 +113,8 @@ Window {
     // Функция отправки сообщения
     function sendMessage(text) {
         if (activeContactId !== -1) {
-            // Отправляем сообщение в C++, где оно запишется в БД
-            appCore.requestSendMessage(activeContactId, text)
+            appCore.requestSendMessage(activeContactId, text, mainWindow.currentReplyText)
+            mainWindow.currentReplyText = ""
         }
     }
 
@@ -492,7 +497,8 @@ Window {
                     if (drop.hasUrls) {
                         // Можно перетаскивать сразу несколько файлов!
                         for (let i = 0; i < drop.urls.length; ++i) {
-                            appCore.requestSendFile(activeContactId, drop.urls[i])
+                            appCore.requestSendFile(activeContactId, drop.urls[i], mainWindow.currentReplyText)
+                            if (i === 0) mainWindow.currentReplyText = "" // Ответ цепляем только к первому файлу
                         }
                         drop.accept()
                     }
@@ -518,10 +524,124 @@ Window {
                     layoutDirection: model.isMine ? Qt.RightToLeft : Qt.LeftToRight
 
                     Rectangle {
+                        id: bubbleRect
                         color: model.isMine ? "#2b5278" : "#333333" // Синий для себя, серый для собеседника
                         radius: 8
-                        width: Math.min(Math.max(isImage ? msgImage.implicitWidth + 20 : msgText.implicitWidth + 20, 60), chatView.width * 0.7)
-                        height: (isImage ? msgImage.height : msgText.implicitHeight) + 30
+                        
+                        property real contentW: isImage ? msgImage.implicitWidth : msgText.implicitWidth
+                        property real replyW: model.replyText !== "" ? replyPreview.implicitWidth + 15 : 0
+                        width: Math.min(Math.max(Math.max(contentW, replyW) + 20, 60), chatView.width * 0.7)
+                        height: (isImage ? msgImage.height : msgText.implicitHeight) + (model.replyText !== "" ? replyPreview.implicitHeight + 10 : 0) + 30
+                        
+                        // Контекстное меню (ПКМ)
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.RightButton
+                            onClicked: (mouse) => {
+                                if (mouse.button === Qt.RightButton) {
+                                    // Ручной расчет координат, чтобы меню 100% не вылезало за экран
+                                    var px = mouse.x
+                                    var py = mouse.y
+                                    if (px + 144 > bubbleRect.width) px = bubbleRect.width - 144
+                                    if (py + 64 > bubbleRect.height) py = bubbleRect.height - 64
+                                    
+                                    messageMenu.x = px
+                                    messageMenu.y = py
+                                    messageMenu.open()
+                                }
+                            }
+                        }
+                        
+                        // Полностью кастомное, предсказуемое меню
+                        Popup {
+                            id: messageMenu
+                            padding: 2 // Тот самый 1-2 миллиметра от рамки меню до края кнопки
+                            background: Rectangle { color: "#252525"; border.color: "#333333"; border.width: 1; radius: 5 }
+                            
+                            contentItem: Column {
+                                spacing: 0
+                                
+                                Rectangle {
+                                    width: 140
+                                    height: 30
+                                    color: replyArea.pressed ? "#444444" : (replyArea.containsMouse ? "#333333" : "transparent")
+                                    radius: 4
+                                    Text { 
+                                        text: "Ответить"
+                                        color: replyArea.containsMouse ? "white" : "#aaaaaa"
+                                        font.pixelSize: 13
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 10
+                                    }
+                                    MouseArea {
+                                        id: replyArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            mainWindow.currentReplyText = isFile ? "[Файл] " + filePath.substring(filePath.lastIndexOf("/") + 1) : safeText
+                                            msgInput.forceActiveFocus()
+                                            messageMenu.close()
+                                        }
+                                    }
+                                }
+                                
+                                Rectangle {
+                                    width: 140
+                                    height: 30
+                                    color: copyArea.pressed ? "#444444" : (copyArea.containsMouse ? "#333333" : "transparent")
+                                    radius: 4
+                                    Text { 
+                                        text: "Копировать текст"
+                                        color: copyArea.containsMouse ? "white" : "#aaaaaa"
+                                        font.pixelSize: 13
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 10
+                                    }
+                                    MouseArea {
+                                        id: copyArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            appCore.copyToClipboard(safeText)
+                                            messageMenu.close()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Блок предпросмотра ответа внутри сообщения
+                        Rectangle {
+                            id: replyLine
+                            visible: model.replyText !== ""
+                            width: 3
+                            height: replyPreview.height
+                            color: "#66b2ff"
+                            anchors.top: parent.top
+                            anchors.topMargin: 8
+                            anchors.left: parent.left
+                            anchors.leftMargin: 10
+                            radius: 1.5
+                        }
+                        Text {
+                            id: replyPreview
+                            visible: model.replyText !== ""
+                            text: model.replyText.replace(/\n/g, " ")
+                            color: "#a0c0e0"
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                            anchors.top: parent.top
+                            anchors.topMargin: 8
+                            anchors.left: replyLine.right
+                            anchors.leftMargin: 5
+                            anchors.right: parent.right
+                            anchors.rightMargin: 10
+                        }
 
                         // Предпросмотр картинки
                         Image {
@@ -536,9 +656,9 @@ Window {
                             width: Math.min(implicitWidth, parent.width - 20)
                             height: isImage && implicitWidth > 0 ? width * (implicitHeight / implicitWidth) : 0
                             
-                            anchors.top: parent.top
+                            anchors.top: model.replyText !== "" ? replyPreview.bottom : parent.top
                             anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.topMargin: 8
+                            anchors.topMargin: model.replyText !== "" ? 6 : 8
                             
                             MouseArea {
                                 anchors.fill: parent
@@ -555,9 +675,9 @@ Window {
                             font.underline: isFile
                             font.pixelSize: 14
                             wrapMode: Text.Wrap
-                            anchors.top: parent.top
+                            anchors.top: model.replyText !== "" ? replyPreview.bottom : parent.top
                             anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.topMargin: 8
+                            anchors.topMargin: model.replyText !== "" ? 4 : 8
                             width: parent.width - 20
                             
                             // Делаем файл кликабельным
@@ -622,15 +742,40 @@ Window {
             // Нижняя панель: Поле ввода сообщения
             Rectangle {
                 Layout.fillWidth: true
-                // Панель теперь автоматически растягивается в высоту при многострочном вводе (до 120px)
-                Layout.preferredHeight: Math.min(120, Math.max(60, msgInput.implicitHeight + 20))
+                // Растягиваем панель под многострочный ввод и блок предпросмотра
+                Layout.preferredHeight: Math.min(120, Math.max(60, msgInput.implicitHeight + 20)) + (mainWindow.currentReplyText !== "" ? 40 : 0)
                 color: "#252525"
                 visible: activeContactName !== ""
 
-                RowLayout {
+                ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 10
                     spacing: 10
+                    
+                    // Плашка ответа над полем ввода
+                    RowLayout {
+                        visible: mainWindow.currentReplyText !== ""
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 30
+                        
+                        Rectangle { Layout.preferredWidth: 3; Layout.fillHeight: true; color: "#4a90e2"; radius: 1.5 }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+                            Text { text: "Ответ на сообщение"; color: "#4a90e2"; font.pixelSize: 11; font.bold: true }
+                            Text { text: mainWindow.currentReplyText.replace(/\n/g, " "); color: "#aaaaaa"; font.pixelSize: 12; elide: Text.ElideRight; maximumLineCount: 1; Layout.fillWidth: true }
+                        }
+                        StyledButton {
+                            iconSource: "icons/close.png"
+                            Layout.preferredWidth: 24; Layout.preferredHeight: 24
+                            onClicked: mainWindow.currentReplyText = ""
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        spacing: 10
 
                     StyledButton {
                         iconSource: "icons/attach.png"
@@ -687,7 +832,8 @@ Window {
                                 Keys.onPressed: (event) => {
                                     // Перехват вставки из буфера обмена (Ctrl+V)
                                     if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)) {
-                                        if (appCore.requestPasteFromClipboard(activeContactId)) {
+                                        if (appCore.requestPasteFromClipboard(activeContactId, mainWindow.currentReplyText)) {
+                                            mainWindow.currentReplyText = ""
                                             event.accepted = true // Буфер обработан в C++ (это файл/картинка)
                                             return
                                         }
@@ -709,8 +855,9 @@ Window {
 
                     StyledButton {
                     id: sendBtn
-                        text: "Отправить"
+                        iconSource: "icons/send.png"
                         Layout.fillHeight: true
+                        Layout.preferredWidth: 40
                     onClicked: {
                         if (msgInput.text.trim() !== "") {
                             sendMessage(msgInput.text.trim())
@@ -721,6 +868,7 @@ Window {
                 }
             }
         }
+    }
     }
 
     // Диалог настроек
@@ -898,7 +1046,8 @@ Window {
         id: fileDialog
         title: "Выберите файл для отправки (до 100 МБ)"
         onAccepted: {
-            appCore.requestSendFile(activeContactId, selectedFile)
+            appCore.requestSendFile(activeContactId, selectedFile, mainWindow.currentReplyText)
+            mainWindow.currentReplyText = ""
         }
     }
 

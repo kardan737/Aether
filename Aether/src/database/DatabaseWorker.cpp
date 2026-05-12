@@ -111,7 +111,7 @@ void DatabaseWorker::addContact(const QString& name, const QString& ip) {
 void DatabaseWorker::loadMessages(int contactId) {
     QList<MessageData> messages;
     QSqlQuery query(m_db);
-    query.prepare("SELECT id, text, is_mine, status, timestamp FROM messages WHERE contact_id = :cid ORDER BY timestamp ASC");
+    query.prepare("SELECT id, text, is_mine, status, timestamp, reply_text FROM messages WHERE contact_id = :cid ORDER BY timestamp ASC");
     query.bindValue(":cid", contactId);
     query.exec();
     
@@ -123,28 +123,30 @@ void DatabaseWorker::loadMessages(int contactId) {
         m.status = query.value(3).toInt();
         qint64 ts = query.value(4).toLongLong();
         m.time = QDateTime::fromSecsSinceEpoch(ts).toString("HH:mm");
+        m.replyText = query.value(5).toString();
         messages.append(m);
     }
     emit messagesLoaded(messages);
 }
 
-void DatabaseWorker::addFileMessage(int contactId, const QString& localPath) {
+void DatabaseWorker::addFileMessage(int contactId, const QString& localPath, const QString& replyText) {
     QString text = "FILE:" + localPath;
-    addMessage(contactId, text, true, 0); // Используем ту же логику сохранения!
+    addMessage(contactId, text, true, 0, replyText);
 }
 
-void DatabaseWorker::addMessage(int contactId, const QString& text, bool isMine, int status) {
+void DatabaseWorker::addMessage(int contactId, const QString& text, bool isMine, int status, const QString& replyText) {
     QSqlQuery query(m_db);
     qint64 ts = QDateTime::currentSecsSinceEpoch();
-    query.prepare("INSERT INTO messages (contact_id, text, is_mine, status, timestamp) VALUES (:cid, :txt, :ism, :st, :ts)");
+    query.prepare("INSERT INTO messages (contact_id, text, is_mine, status, timestamp, reply_text) VALUES (:cid, :txt, :ism, :st, :ts, :rt)");
     query.bindValue(":cid", contactId);
     query.bindValue(":txt", text);
     query.bindValue(":ism", isMine ? 1 : 0);
     query.bindValue(":st", status);
     query.bindValue(":ts", ts);
+    query.bindValue(":rt", replyText);
     
     if (query.exec()) {
-        MessageData m{query.lastInsertId().toInt(), text, isMine, status, QDateTime::fromSecsSinceEpoch(ts).toString("HH:mm")};
+        MessageData m{query.lastInsertId().toInt(), text, isMine, status, QDateTime::fromSecsSinceEpoch(ts).toString("HH:mm"), 0.0, replyText};
         emit messageAdded(contactId, m);
         
         // Обновляем время последней активности контакта и поднимаем его наверх
@@ -171,6 +173,9 @@ void DatabaseWorker::addMessage(int contactId, const QString& text, bool isMine,
                 // Подцепляем наше имя из настроек для отправки другу
                 QSettings settings;
                 json["sender_name"] = settings.value("myName", "Аноним").toString();
+                if (!replyText.isEmpty()) {
+                    json["reply_text"] = replyText;
+                }
                 
                 if (text.startsWith("FILE:")) {
                     QString path = text.mid(5);
@@ -197,7 +202,7 @@ void DatabaseWorker::addMessage(int contactId, const QString& text, bool isMine,
     }
 }
 
-void DatabaseWorker::processIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName) {
+void DatabaseWorker::processIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName, const QString& replyText) {
     QSqlQuery q(m_db);
     q.prepare("SELECT id, name FROM contacts WHERE ip_address = :ip LIMIT 1");
     q.bindValue(":ip", ip);
@@ -242,7 +247,7 @@ void DatabaseWorker::processIncomingNetworkMessage(const QString& ip, const QStr
     }
     
     // Сохраняем сообщение как входящее (isMine=false, status=1)
-    addMessage(contactId, text, false, 1);
+    addMessage(contactId, text, false, 1, replyText);
     
     // Увеличиваем счетчик непрочитанных сообщений для этого контакта
     QSqlQuery updateUnread(m_db);
@@ -258,7 +263,7 @@ void DatabaseWorker::processIncomingNetworkMessage(const QString& ip, const QStr
     }
 }
 
-void DatabaseWorker::processIncomingFileMessage(const QString& ip, const QString& filename, const QByteArray& data, const QString& senderName) {
+void DatabaseWorker::processIncomingFileMessage(const QString& ip, const QString& filename, const QByteArray& data, const QString& senderName, const QString& replyText) {
     QSqlQuery q(m_db);
     q.prepare("SELECT id FROM contacts WHERE ip_address = :ip LIMIT 1");
     q.bindValue(":ip", ip);
@@ -304,7 +309,7 @@ void DatabaseWorker::processIncomingFileMessage(const QString& ip, const QString
     }
     
     QString text = "FILE:" + filePath;
-    addMessage(contactId, text, false, 1); // Сохраняем в БД как файл
+    addMessage(contactId, text, false, 1, replyText); // Сохраняем в БД как файл
     
     // Обновляем счетчик
     QSqlQuery updateUnread(m_db);
@@ -435,7 +440,7 @@ void DatabaseWorker::handleMessageSendFailed(int messageId) {
 void DatabaseWorker::processStoreAndForward() {
     QSqlQuery query(m_db);
     // Ищем зависшие сообщения, которые мы отправили, но статус всё еще 0
-    query.exec("SELECT m.id, m.text, c.ip_address FROM messages m JOIN contacts c ON m.contact_id = c.id WHERE m.status = 0 AND m.is_mine = 1");
+    query.exec("SELECT m.id, m.text, c.ip_address, m.reply_text FROM messages m JOIN contacts c ON m.contact_id = c.id WHERE m.status = 0 AND m.is_mine = 1");
     
     QSettings settings;
     QString myName = settings.value("myName", "Аноним").toString();
@@ -445,6 +450,11 @@ void DatabaseWorker::processStoreAndForward() {
         if (m_inFlightMessages.contains(msgId)) continue; // Файл УЖЕ отправляется, пропускаем!
 
         QJsonObject json; json["type"] = "message"; json["msg_id"] = query.value(0).toInt(); json["text"] = query.value(1).toString(); json["sender_name"] = myName;
+        
+        QString replyText = query.value(3).toString();
+        if (!replyText.isEmpty()) {
+            json["reply_text"] = replyText;
+        }
         
         QString text = query.value(1).toString();
         if (text.startsWith("FILE:")) {
@@ -492,4 +502,7 @@ void DatabaseWorker::createTables() {
                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
                "contact_id INTEGER, text TEXT, is_mine INTEGER, status INTEGER, timestamp INTEGER, "
                "FOREIGN KEY(contact_id) REFERENCES contacts(id))");
+               
+    // Мягкое добавление колонки ответов (ДОЛЖНО БЫТЬ СТРОГО ПОСЛЕ СОЗДАНИЯ ТАБЛИЦЫ)
+    query.exec("ALTER TABLE messages ADD COLUMN reply_text TEXT DEFAULT ''");
 }
