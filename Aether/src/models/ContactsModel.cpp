@@ -18,6 +18,7 @@ QVariant ContactsModel::data(const QModelIndex &index, int role) const {
         case UnreadCountRole: return contact.unreadCount;
         case LastMessageRole: return contact.lastMessage;
         case OriginalNameRole: return contact.originalName;
+        case IpAddressRole: return contact.ipAddress;
         default: return QVariant();
     }
 }
@@ -30,6 +31,7 @@ QHash<int, QByteArray> ContactsModel::roleNames() const {
     roles[UnreadCountRole] = "unreadCount";
     roles[LastMessageRole] = "lastMessage";
     roles[OriginalNameRole] = "originalName";
+    roles[IpAddressRole] = "ipAddress";
     return roles;
 }
 

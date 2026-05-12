@@ -12,6 +12,7 @@ struct ContactData {
     int unreadCount;
     QString lastMessage;
     QString originalName;
+    QString ipAddress;
 };
 Q_DECLARE_METATYPE(ContactData)
 Q_DECLARE_METATYPE(QList<ContactData>)
@@ -25,7 +26,8 @@ public:
         IsOnlineRole,
         UnreadCountRole,
         LastMessageRole,
-        OriginalNameRole
+        OriginalNameRole,
+        IpAddressRole
     };
 
     explicit ContactsModel(QObject *parent = nullptr);

@@ -28,6 +28,7 @@ public:
     Q_INVOKABLE void requestSendMessage(int contactId, const QString& text, const QString& replyText = "");
     Q_INVOKABLE void requestClearChat(int contactId);
     Q_INVOKABLE void requestDeleteContact(int contactId);
+    Q_INVOKABLE void requestDeleteMessage(int messageId);
     Q_INVOKABLE void requestRenameContact(int contactId, const QString& newName);
     Q_INVOKABLE void requestMarkChatAsRead(int contactId);
     Q_INVOKABLE void requestSendFile(int contactId, const QUrl& fileUrl, const QString& replyText = "");
@@ -48,6 +49,7 @@ signals:
     void requestAddMessageToDb(int contactId, const QString& text, bool isMine, int status, const QString& replyText);
     void requestClearChatInDb(int contactId);
     void requestDeleteContactInDb(int contactId);
+    void requestDeleteMessageInDb(int messageId);
     void requestRenameContactInDb(int contactId, const QString& newName);
     void requestProcessIncomingNetworkMessage(const QString& ip, const QString& text, const QString& senderName, const QString& replyText);
     void requestMarkChatAsReadInDb(int contactId);

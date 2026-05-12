@@ -24,6 +24,7 @@ Window {
     property int activeContactId: -1
     property string activeContactName: ""
     property string activeContactOriginalName: ""
+    property string activeContactIp: ""
     
     // Текст сообщения, на которое мы отвечаем в данный момент
     property string currentReplyText: ""
@@ -98,10 +99,11 @@ Window {
     }
 
     // Функция переключения чата (в будущем это будет вызов C++ метода)
-    function loadChat(id, name, originalName) {
+    function loadChat(id, name, originalName, ip) {
         activeContactId = id
         activeContactName = name
         activeContactOriginalName = originalName || ""
+        activeContactIp = ip || ""
         mainWindow.currentReplyText = "" // Сбрасываем ответ при смене чата
         // Запрашиваем C++ загрузить историю из БД для этого контакта
         appCore.requestLoadMessages(id)
@@ -274,7 +276,7 @@ Window {
 
                         onClicked: {
                             // Переключаем чат
-                            loadChat(model.id, model.name, model.originalName)
+                            loadChat(model.id, model.name, model.originalName, model.ipAddress)
                         }
                     }
                 }
@@ -442,27 +444,16 @@ Window {
             
                 Qt.callLater(function() {
                     if (chatView.count === 0) return;
-                    
-                    var targetY = Math.max(-chatView.topMargin, chatView.contentHeight - chatView.height + chatView.bottomMargin)
-                    
-                    // Если прыжок слишком большой (например, открыли другой чат с историей) — мотаем мгновенно
-                    if (chatView.height === 0 || Math.abs(targetY - chatView.contentY) > chatView.height / 2) {
-                        // Используем надежный встроенный метод вместо ручной установки координаты
-                        chatView.positionViewAtEnd()
-                    } else if (targetY > chatView.contentY) {
-                        // Если добавилось 1-2 сообщения — плавно прокручиваем, сдвигая старые сообщения вверх
-                        smoothScrollAnim.to = targetY
-                        smoothScrollAnim.start()
-                    }
+                    // Полностью доверяем нативному методу (избавляет от дыр внизу чата)
+                    chatView.positionViewAtEnd()
                 })
             }
             
-            PropertyAnimation {
-                id: smoothScrollAnim
-                target: chatView
-                property: "contentY"
-                duration: 300
-                easing.type: Easing.OutQuad
+            // Прилипаем ко дну, если печатаем длинный текст или меняем размер окна
+            onHeightChanged: {
+                if (atYEnd && count > 0) {
+                    positionViewAtEnd()
+                }
             }
 
             // Плавное появление самого пузырька сообщения
@@ -510,9 +501,11 @@ Window {
                 width: ListView.view.width
                 height: msgRow.height
                 
-                property bool isFile: model.text.startsWith("FILE:")
-                property string filePath: isFile ? model.text.substring(5).replace(/\\/g, "/") : ""
-                property bool isImage: isFile && filePath.match(/\.(jpeg|jpg|png|gif|bmp|webp)$/i) !== null
+                // Железобетонная броня от крашей QML (если модель вернет undefined)
+                property string safeText: model.text || ""
+                property bool isFile: safeText.startsWith("FILE:")
+                property string filePath: isFile ? safeText.substring(5).replace(/\\/g, "/") : ""
+                property bool isImage: isFile && filePath.match(/\.(jpeg|jpg|png|gif|bmp)$/i) !== null
 
                 Row {
                     id: msgRow
@@ -528,10 +521,18 @@ Window {
                         color: model.isMine ? "#2b5278" : "#333333" // Синий для себя, серый для собеседника
                         radius: 8
                         
-                        property real contentW: isImage ? msgImage.implicitWidth : msgText.implicitWidth
-                        property real replyW: model.replyText !== "" ? replyPreview.implicitWidth + 15 : 0
-                        width: Math.min(Math.max(Math.max(contentW, replyW) + 20, 60), chatView.width * 0.7)
-                        height: (isImage ? msgImage.height : msgText.implicitHeight) + (model.replyText !== "" ? replyPreview.implicitHeight + 10 : 0) + 30
+                        // Идеальная защита от мусора из баз данных
+                        property string safeReply: {
+                            if (!model || !model.replyText) return "";
+                            var s = String(model.replyText).trim();
+                            if (s === "undefined" || s === "null" || s === "") return "";
+                            return s;
+                        }
+                        property bool hasReply: safeReply !== ""
+                        
+                        property real maxBubbleW: Math.max(150, chatView.width * 0.7)
+                        width: Math.max(60, contentCol.width + 20)
+                        height: contentCol.height + 26
                         
                         // Контекстное меню (ПКМ)
                         MouseArea {
@@ -543,7 +544,7 @@ Window {
                                     var px = mouse.x
                                     var py = mouse.y
                                     if (px + 144 > bubbleRect.width) px = bubbleRect.width - 144
-                                    if (py + 64 > bubbleRect.height) py = bubbleRect.height - 64
+                                    if (py + 94 > bubbleRect.height) py = bubbleRect.height - 94 // Учли 3 кнопки
                                     
                                     messageMenu.x = px
                                     messageMenu.y = py
@@ -610,83 +611,105 @@ Window {
                                             messageMenu.close()
                                         }
                                     }
+                                }                            
+                                Rectangle {
+                                    // Кнопка появляется только для своих, еще не отправленных сообщений!
+                                    visible: model.isMine && model.status === 0
+                                    width: 140
+                                    height: visible ? 30 : 0
+                                    color: cancelArea.pressed ? "#444444" : (cancelArea.containsMouse ? "#333333" : "transparent")
+                                    radius: 4
+                                    Text { 
+                                        text: "Отменить отправку"
+                                        color: cancelArea.containsMouse ? "#ff6666" : "#e57373" // Красный цвет для отмены
+                                        font.pixelSize: 13
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 10
+                                    }
+                                    MouseArea {
+                                        id: cancelArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            appCore.requestDeleteMessage(model.id)
+                                            messageMenu.close()
+                                        }
+                                    }
                                 }
                             }
                         }
 
-                        // Блок предпросмотра ответа внутри сообщения
-                        Rectangle {
-                            id: replyLine
-                            visible: model.replyText !== ""
-                            width: 3
-                            height: replyPreview.height
-                            color: "#66b2ff"
+                        // УМНАЯ КОЛОНКА КОНТЕНТА
+                        Column {
+                            id: contentCol
                             anchors.top: parent.top
-                            anchors.topMargin: 8
                             anchors.left: parent.left
-                            anchors.leftMargin: 10
-                            radius: 1.5
-                        }
-                        Text {
-                            id: replyPreview
-                            visible: model.replyText !== ""
-                            text: model.replyText.replace(/\n/g, " ")
-                            color: "#a0c0e0"
-                            font.pixelSize: 12
-                            elide: Text.ElideRight
-                            maximumLineCount: 1
-                            anchors.top: parent.top
                             anchors.topMargin: 8
-                            anchors.left: replyLine.right
-                            anchors.leftMargin: 5
-                            anchors.right: parent.right
-                            anchors.rightMargin: 10
-                        }
-
-                        // Предпросмотр картинки
-                        Image {
-                            id: msgImage
-                            visible: isImage
-                            source: isImage ? "file:///" + filePath : ""
-                            fillMode: Image.PreserveAspectFit
-                            sourceSize.width: 250 // Оптимизация памяти (картинка сожмется для предпросмотра)
-                            sourceSize.height: 250
+                            anchors.leftMargin: 10
+                            spacing: 6
                             
-                            // Строго ограничиваем ширину картинки и пересчитываем высоту с сохранением пропорций
-                            width: Math.min(implicitWidth, parent.width - 20)
-                            height: isImage && implicitWidth > 0 ? width * (implicitHeight / implicitWidth) : 0
+                            width: Math.max(replyRow.width, msgImage.width, msgText.width)
                             
-                            anchors.top: model.replyText !== "" ? replyPreview.bottom : parent.top
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.topMargin: model.replyText !== "" ? 6 : 8
-                            
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: Qt.openUrlExternally("file:///" + filePath)
+                            // Блок предпросмотра ответа
+                            Row {
+                                id: replyRow
+                                visible: bubbleRect.hasReply
+                                spacing: 6
+                                width: bubbleRect.hasReply ? Math.min(replyPreview.implicitWidth + 10, bubbleRect.maxBubbleW - 20) : 0
+                                
+                                Rectangle {
+                                    width: 3
+                                    height: replyPreview.height
+                                    color: "#66b2ff"
+                                    radius: 1.5
+                                }
+                                Text {
+                                    id: replyPreview
+                                    text: bubbleRect.safeReply.replace(/\n/g, " ")
+                                    color: "#a0c0e0"
+                                    font.pixelSize: 12
+                                    elide: Text.ElideRight
+                                    maximumLineCount: 1
+                                    width: parent.width - 10
+                                }
                             }
-                        }
 
-                        Text {
-                            id: msgText
-                            visible: !isImage // Прячем текст, если это картинка
-                            text: isFile ? "[Файл] " + filePath.substring(filePath.lastIndexOf("/") + 1) : model.text
-                            color: isFile ? "#66b2ff" : "white"
-                            font.underline: isFile
-                            font.pixelSize: 14
-                            wrapMode: Text.Wrap
-                            anchors.top: model.replyText !== "" ? replyPreview.bottom : parent.top
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.topMargin: model.replyText !== "" ? 4 : 8
-                            width: parent.width - 20
-                            
-                            // Делаем файл кликабельным
-                            MouseArea {
-                                anchors.fill: parent
-                                enabled: isFile
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    Qt.openUrlExternally("file:///" + filePath)
+                            // Предпросмотр картинки
+                            Image {
+                                id: msgImage
+                                visible: isImage
+                                source: isImage ? "file:///" + filePath : ""
+                                fillMode: Image.PreserveAspectFit
+                                sourceSize.width: 250
+                                sourceSize.height: 250
+                                width: isImage ? Math.min(implicitWidth, bubbleRect.maxBubbleW - 20) : 0
+                                height: isImage && implicitWidth > 0 ? (width * implicitHeight / implicitWidth) : 0
+                                
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("file:///" + filePath)
+                                }
+                            }
+
+                            // Текст сообщения
+                            Text {
+                                id: msgText
+                                visible: !isImage
+                                text: isFile ? "[Файл] " + filePath.substring(filePath.lastIndexOf("/") + 1) : safeText
+                                color: isFile ? "#66b2ff" : "white"
+                                font.underline: isFile
+                                font.pixelSize: 14
+                                wrapMode: Text.Wrap
+                                width: !isImage ? Math.min(implicitWidth, bubbleRect.maxBubbleW - 20) : 0
+                                
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: isFile
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("file:///" + filePath)
                                 }
                             }
                         }
@@ -988,7 +1011,7 @@ Window {
     Popup {
         id: renameChatPopup
         width: 250
-        height: 180
+        height: 190
         x: Math.round((parent.width - width) / 2)
         y: Math.round((parent.height - height) / 2)
         modal: true
@@ -1014,11 +1037,13 @@ Window {
             }
             
             Text {
-                text: "Настоящее имя: " + activeContactOriginalName
+                text: (activeContactIp !== "" ? "IP: " + activeContactIp + "\n" : "") + 
+                      (activeContactOriginalName !== "" ? "Наст. имя: " + activeContactOriginalName : "")
                 color: "#888888"
                 font.pixelSize: 12
                 Layout.alignment: Qt.AlignHCenter
-                visible: activeContactOriginalName !== ""
+                horizontalAlignment: Text.AlignHCenter
+                visible: text.trim() !== ""
             }
             
             TextField {

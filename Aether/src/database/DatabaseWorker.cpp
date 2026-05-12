@@ -60,7 +60,7 @@ void DatabaseWorker::loadContacts() {
     // Умный запрос: вытягиваем контакты и заодно текст их последнего сообщения
     query.exec("SELECT c.id, c.name, c.last_seen, c.unread_count, "
                "(SELECT text FROM messages m WHERE m.contact_id = c.id ORDER BY m.timestamp DESC LIMIT 1), "
-               "c.original_name "
+               "c.original_name, c.ip_address "
                "FROM contacts c ORDER BY c.last_seen DESC");
     while (query.next()) {
         ContactData c;
@@ -70,6 +70,7 @@ void DatabaseWorker::loadContacts() {
         c.unreadCount = query.value(3).toInt();
         c.lastMessage = query.value(4).toString();
         c.originalName = query.value(5).toString();
+        c.ipAddress = query.value(6).toString();
         contacts.append(c);
     }
     emit contactsLoaded(contacts);
@@ -102,6 +103,7 @@ void DatabaseWorker::addContact(const QString& name, const QString& ip) {
         c.unreadCount = 0;
         c.lastMessage = "";
         c.originalName = "";
+        c.ipAddress = ip;
         emit contactAdded(c);
     } else {
         qWarning() << "Error adding contact to DB:" << query.lastError().text();
@@ -231,7 +233,7 @@ void DatabaseWorker::processIncomingNetworkMessage(const QString& ip, const QStr
         q.bindValue(":ts", QDateTime::currentSecsSinceEpoch());
         if (q.exec()) {
             contactId = q.lastInsertId().toInt();
-            emit contactAdded(ContactData{contactId, finalName, true, 0, "", senderName});
+            emit contactAdded(ContactData{contactId, finalName, true, 0, "", senderName, ip});
         }
     }
     
@@ -277,7 +279,7 @@ void DatabaseWorker::processIncomingFileMessage(const QString& ip, const QString
         q.bindValue(":name", finalName); q.bindValue(":ip", ip); q.bindValue(":ts", QDateTime::currentSecsSinceEpoch());
         if (q.exec()) {
             contactId = q.lastInsertId().toInt();
-            emit contactAdded(ContactData{contactId, finalName, true, 0, "", senderName});
+            emit contactAdded(ContactData{contactId, finalName, true, 0, "", senderName, ip});
         }
     }
     
@@ -346,6 +348,18 @@ void DatabaseWorker::deleteContact(int contactId) {
     query.bindValue(":cid", contactId);
     if (query.exec()) {
         emit contactDeleted(contactId);
+    }
+}
+
+void DatabaseWorker::deleteMessage(int messageId) {
+    QSqlQuery query(m_db);
+    query.prepare("DELETE FROM messages WHERE id = :id");
+    query.bindValue(":id", messageId);
+    if (query.exec()) {
+        m_inFlightMessages.remove(messageId); // Убираем из очереди отправки
+        emit messageDeleted(messageId);
+    } else {
+        qWarning() << "Error deleting message:" << query.lastError().text();
     }
 }
 

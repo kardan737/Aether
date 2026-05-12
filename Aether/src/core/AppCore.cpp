@@ -75,6 +75,7 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(this, &AppCore::requestAddFileMessageToDb, m_dbWorker, &DatabaseWorker::addFileMessage);
     connect(this, &AppCore::requestClearChatInDb, m_dbWorker, &DatabaseWorker::clearChat);
     connect(this, &AppCore::requestDeleteContactInDb, m_dbWorker, &DatabaseWorker::deleteContact);
+    connect(this, &AppCore::requestDeleteMessageInDb, m_dbWorker, &DatabaseWorker::deleteMessage);
     connect(this, &AppCore::requestRenameContactInDb, m_dbWorker, &DatabaseWorker::renameContact);
     connect(this, &AppCore::requestMarkChatAsReadInDb, m_dbWorker, &DatabaseWorker::markChatAsRead);
     connect(this, &AppCore::requestClearCacheInDb, m_dbWorker, &DatabaseWorker::clearCache);
@@ -82,6 +83,7 @@ AppCore::AppCore(QObject *parent) : QObject(parent) {
     connect(m_dbWorker, &DatabaseWorker::messagesLoaded, m_messagesModel, &MessagesModel::setMessages);
     connect(m_dbWorker, &DatabaseWorker::messageAdded, this, &AppCore::onMessageAdded);
     connect(m_dbWorker, &DatabaseWorker::contactDeleted, m_contactsModel, &ContactsModel::removeContact);
+    connect(m_dbWorker, &DatabaseWorker::messageDeleted, m_messagesModel, &MessagesModel::removeMessage);
     connect(m_dbWorker, &DatabaseWorker::contactRenamed, m_contactsModel, &ContactsModel::updateContactName);
     connect(m_dbWorker, &DatabaseWorker::contactMovedToTop, m_contactsModel, &ContactsModel::moveContactToTop);
     connect(m_dbWorker, &DatabaseWorker::contactUnreadCountChanged, m_contactsModel, &ContactsModel::updateContactUnreadCount);
@@ -226,6 +228,10 @@ void AppCore::requestDeleteContact(int contactId) {
         m_messagesModel->clear(); // Очищаем сообщения на экране
         m_currentContactId = -1;
     }
+}
+
+void AppCore::requestDeleteMessage(int messageId) {
+    emit requestDeleteMessageInDb(messageId);
 }
 
 void AppCore::requestRenameContact(int contactId, const QString& newName) {

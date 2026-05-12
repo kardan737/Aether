@@ -39,6 +39,7 @@ public slots:
     void setMessages(const QList<MessageData>& messages);
     void appendMessage(const MessageData& message);
     void clear();
+    void removeMessage(int messageId);
     void updateMessageStatus(int messageId, int status);
     void updateMessageProgress(int messageId, double progress);
 

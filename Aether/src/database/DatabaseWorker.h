@@ -26,6 +26,7 @@ public slots:
     void addMessage(int contactId, const QString& text, bool isMine, int status, const QString& replyText = "");
     void clearChat(int contactId);
     void deleteContact(int contactId);
+    void deleteMessage(int messageId);
     void renameContact(int contactId, const QString& newName);
     void updateMessageStatus(int messageId, int status);
     void markChatAsRead(int contactId);
@@ -47,6 +48,7 @@ signals:
     void messagesLoaded(QList<MessageData> messages);
     void messageAdded(int contactId, MessageData message);
     void contactDeleted(int contactId);
+    void messageDeleted(int messageId);
     void messageStatusUpdated(int messageId, int status);
     void contactStatusChanged(int contactId, bool isOnline);
     void contactRenamed(int contactId, const QString& newName);

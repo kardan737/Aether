@@ -53,6 +53,17 @@ void MessagesModel::clear() {
     endResetModel();
 }
 
+void MessagesModel::removeMessage(int messageId) {
+    for (int i = 0; i < m_messages.size(); ++i) {
+        if (m_messages[i].id == messageId) {
+            beginRemoveRows(QModelIndex(), i, i);
+            m_messages.removeAt(i);
+            endRemoveRows();
+            break;
+        }
+    }
+}
+
 void MessagesModel::updateMessageStatus(int messageId, int status) {
     for (int i = 0; i < m_messages.size(); ++i) {
         if (m_messages[i].id == messageId) {
